@@ -1,0 +1,29 @@
+{
+    "name": "lobby",
+    "tree": {
+        "$className": "DataModel",
+        "ReplicatedStorage": {
+            "$className": "ReplicatedStorage",
+            "common": { "$path": "src/common/shared" },
+            "shared": { "$path": "src/lobby/shared" },
+            "Packages": {
+                "$path": "Packages"
+            }
+        },
+        "ServerScriptService": {
+            "$className": "ServerScriptService",
+            "common": { "$path": "src/common/server" },
+            "server": { "$path": "src/lobby/server" }
+        },
+        "StarterPlayer": {
+            "StarterPlayerScripts": {
+                "$className": "StarterPlayerScripts",
+                "common": { "$path": "src/common/client" },
+                "client": { "$path": "src/lobby/client" }
+            }
+        },
+        "Workspace": {},
+        "Lighting": {},
+        "SoundService": {}
+    }
+}

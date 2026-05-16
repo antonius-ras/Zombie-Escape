@@ -1,0 +1,29 @@
+{
+    "name": "gameplay",
+    "tree": {
+        "$className": "DataModel",
+        "ReplicatedStorage": {
+            "$className": "ReplicatedStorage",
+            "common": { "$path": "src/common/shared" },
+            "shared": { "$path": "src/gameplay/shared" },
+            "Packages": {
+                "$path": "Packages"
+            }
+        },
+        "ServerScriptService": {
+            "$className": "ServerScriptService",
+            "common": { "$path": "src/common/server" },
+            "server": { "$path": "src/gameplay/server" }
+        },
+        "StarterPlayer": {
+            "StarterPlayerScripts": {
+                "$className": "StarterPlayerScripts",
+                "common": { "$path": "src/common/client" },
+                "client": { "$path": "src/gameplay/client" }
+            }
+        },
+        "Workspace": {},
+        "Lighting": {},
+        "SoundService": {}
+    }
+}
