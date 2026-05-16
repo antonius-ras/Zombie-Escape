@@ -37,4 +37,5 @@ function partyManager.Destroy()
 	initialized = false
 end
 
+
 return partyManager
