@@ -22,7 +22,7 @@ local ZombiesTeam = Teams:WaitForChild("Zombies")
 local ZombiesSpawn = Workspace:WaitForChild("ZombiesSpawn")
 local HumanSpawn = Workspace:WaitForChild("HumanSpawn")
 
-local MIN_PLAYERS = 1
+local MIN_PLAYERS = 2
 local COUNTDOWN_TIME = 10
 local ROUND_TIME = 300
 local ZOMBIE_RATIO = 0.2

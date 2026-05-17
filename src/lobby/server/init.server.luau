@@ -1,10 +1,34 @@
 local ServerScriptService = game:GetService("ServerScriptService")
 local commonServer = (ServerScriptService :: any).common
 
-local DataManager = require(commonServer.DataManager)
-local PartyManager = require(commonServer.PartyManager)
-local ServerListFetcher = require(commonServer.ServerListFetcher)
+local function requireModule(moduleScript: ModuleScript, moduleName: string)
+	local ok, result = pcall(require, moduleScript)
+	if not ok then
+		error(string.format("[lobby/init.server] require failed for %s (%s): %s", moduleName, moduleScript:GetFullName(), tostring(result)))
+	end
 
-DataManager.Init()
-PartyManager.Init()
-ServerListFetcher.Init()
+	return result
+end
+
+local function initModule(moduleTable: any, moduleName: string, ...)
+	local ok, result = pcall(moduleTable.Init, ...)
+	if not ok then
+		error(string.format("[lobby/init.server] init failed for %s: %s", moduleName, tostring(result)))
+	end
+
+	return result
+end
+
+local DataManager = requireModule(commonServer.DataManager, "DataManager")
+local PartyManager = requireModule(commonServer.PartyManager, "PartyManager")
+local ServerListFetcher = requireModule(commonServer.ServerListFetcher, "ServerListFetcher")
+local PresenceService = requireModule(commonServer.PresenceService, "PresenceService")
+local PartyInviteService = requireModule(commonServer.PartyInviteService, "PartyInviteService")
+local QueueTeleportService = requireModule(script:WaitForChild("QueueTeleportService"), "QueueTeleportService")
+
+initModule(PresenceService, "PresenceService", "lobby")
+initModule(DataManager, "DataManager")
+initModule(PartyManager, "PartyManager")
+initModule(ServerListFetcher, "ServerListFetcher")
+initModule(PartyInviteService, "PartyInviteService")
+initModule(QueueTeleportService, "QueueTeleportService")
