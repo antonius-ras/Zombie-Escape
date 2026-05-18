@@ -131,6 +131,22 @@ local function saveParty(party: {[string]: any})
 	end)
 end
 
+-- เพิ่มฟังก์ชัน UpdateParty สำหรับแก้ปัญหา Race Condition ด้วย UpdateAsync
+local function updateParty(partyId: string, transformFunction: (any) -> (any?)): boolean
+	local success, err = pcall(function()
+		partyMap:UpdateAsync(partyId, function(oldParty)
+			if not oldParty then return nil end
+			local updatedParty = transformFunction(oldParty)
+			if updatedParty then
+				updatedParty.updatedAt = os.time()
+				return updatedParty
+			end
+			return nil -- ถ้าคืนค่า nil แปลว่าให้ยกเลิกการอัปเดต หรือลบ (ขึ้นอยู่กับ logic)
+		end, PARTY_TTL_SECONDS)
+	end)
+	return success
+end
+
 local function deleteParty(partyId: string)
 	pcall(function()
 		partyMap:RemoveAsync(partyId)
@@ -540,29 +556,43 @@ local function handleRespondInvite(player: Player, payload: {[string]: any})
 		return { ok = false, message = "already_in_party" }
 	end
 
-	local party = getPartyById(invite.partyId)
-	if not party then
-		removeInvite(inviteId)
-		return { ok = false, message = "party_not_found" }
-	end
+	-- ใช้ UpdateAsync เพื่อแก้ปัญหา Race Condition ตอนรับคนเข้าปาร์ตี้
+	local updatedPartySnapshot = nil
+	local errorMessage = nil
 
-	if #party.memberUserIds >= MAX_PARTY_SIZE then
-		removeInvite(inviteId)
-		return { ok = false, message = "party_full" }
-	end
+	local success = updateParty(invite.partyId, function(party)
+		if not party then
+			errorMessage = "party_not_found"
+			return nil
+		end
 
-	if not containsUser(party.memberUserIds, player.UserId) then
-		table.insert(party.memberUserIds, player.UserId)
-	end
-	setPartyMemberName(party, player.UserId, player.DisplayName)
-	setPartyMemberName(party, invite.fromUserId, invite.fromName)
+		if #party.memberUserIds >= MAX_PARTY_SIZE then
+			errorMessage = "party_full"
+			return nil
+		end
 
-	saveParty(party)
-	setUserPartyId(player.UserId, party.partyId)
+		if not containsUser(party.memberUserIds, player.UserId) then
+			table.insert(party.memberUserIds, player.UserId)
+		end
+		
+		ensureMemberNames(party)
+		party.memberNames[tostring(player.UserId)] = player.DisplayName
+		party.memberNames[tostring(invite.fromUserId)] = invite.fromName
+		
+		updatedPartySnapshot = party
+		return party
+	end)
+
 	removeInvite(inviteId)
 
-	broadcastPartyUpdate(party)
-	return { ok = true, data = buildPartySnapshot(party) }
+	if not success or errorMessage then
+		return { ok = false, message = errorMessage or "update_failed" }
+	end
+
+	setUserPartyId(player.UserId, updatedPartySnapshot.partyId)
+	broadcastPartyUpdate(updatedPartySnapshot)
+	
+	return { ok = true, data = buildPartySnapshot(updatedPartySnapshot) }
 end
 
 local function handleLeaveParty(player: Player)

@@ -20,7 +20,6 @@ local function initModule(moduleTable: any, moduleName: string, ...)
 end
 
 local DataManager = requireModule(commonServer.DataManager, "DataManager")
-local PartyManager = requireModule(commonServer.PartyManager, "PartyManager")
 local ServerListFetcher = requireModule(commonServer.ServerListFetcher, "ServerListFetcher")
 local PresenceService = requireModule(commonServer.PresenceService, "PresenceService")
 local PartyInviteService = requireModule(commonServer.PartyInviteService, "PartyInviteService")
@@ -28,7 +27,6 @@ local QueueTeleportService = requireModule(script:WaitForChild("QueueTeleportSer
 
 initModule(PresenceService, "PresenceService", "lobby")
 initModule(DataManager, "DataManager")
-initModule(PartyManager, "PartyManager")
 initModule(ServerListFetcher, "ServerListFetcher")
 initModule(PartyInviteService, "PartyInviteService")
 initModule(QueueTeleportService, "QueueTeleportService")

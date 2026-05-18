@@ -159,9 +159,20 @@ local function bounceIn(obj: GuiObject, delayTime: number?, epoch: number?)
 	local targetBackgroundTransparency = getTargetBackgroundTransparency(obj)
 	obj.Position    = targetPos + UDim2.fromScale(0, 0.3)
 	obj.Visible     = true
+	
 	if pcall(function() return obj.BackgroundTransparency end) then
 		obj.BackgroundTransparency = 1
 	end
+
+	-- รีเซ็ตค่า Transparency ของลูกๆ ทันทีเพื่อป้องกันปัญหาตัวหนังสือเทา/จาง
+	for _, child in ipairs(obj:GetDescendants()) do
+		if child:IsA("TextLabel") or child:IsA("TextButton") then
+			child.TextTransparency = 1
+		elseif child:IsA("ImageLabel") or child:IsA("ImageButton") then
+			child.ImageTransparency = 1
+		end
+	end
+
 	task.delay(delayTime or 0, function()
 		if not isEpochCurrent(epoch) then
 			return
@@ -969,7 +980,7 @@ function PlayMenuScreen.show()
 	forceHideAllSubFrames()
 	setActiveBtn(nil)
 	_playMenu.Visible = false
-	_isStandalonePromptMode = false
+	_isInteractive = false
 	_gui.Enabled = true
 	-- PlayMenu เด้งขึ้นก่อน
 	bounceIn(_playMenu, 0, epoch)

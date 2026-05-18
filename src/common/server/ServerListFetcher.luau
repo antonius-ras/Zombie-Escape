@@ -15,6 +15,12 @@ local GET_SERVERS_RF_NAME = "GetServersInfo"
 local JOIN_SERVER_RF_NAME = "JoinServerByJob"
 local IS_STUDIO = RunService:IsStudio()
 
+-- Cache System
+local CACHE_TTL_SECONDS = 5
+local cachedServerList = {}
+local lastCacheUpdate = 0
+local isUpdatingCache = false
+
 local function getPartyPlayers(memberUserIds: {number}): ({Player}, number)
 	local players = {}
 	local missingCount = 0
@@ -53,14 +59,22 @@ local function getPlayersForServerJoin(player: Player): ({Player}?, string?)
 end
 
 local function getOrCreateRemoteFunction(name: string): RemoteFunction
-	local existing = ReplicatedStorage:FindFirstChild(name)
+	local sharedFolder = ReplicatedStorage:WaitForChild("shared")
+	local remotesFolder = sharedFolder:FindFirstChild("Remotes")
+	if not remotesFolder then
+		remotesFolder = Instance.new("Folder")
+		remotesFolder.Name = "Remotes"
+		remotesFolder.Parent = sharedFolder
+	end
+
+	local existing = remotesFolder:FindFirstChild(name)
 	if existing and existing:IsA("RemoteFunction") then
 		return existing
 	end
 
 	local remoteFunction = Instance.new("RemoteFunction")
 	remoteFunction.Name = name
-	remoteFunction.Parent = ReplicatedStorage
+	remoteFunction.Parent = remotesFolder
 	return remoteFunction
 end
 
@@ -111,6 +125,33 @@ local function buildServerEntries(): {any}
 	return servers
 end
 
+local function getCachedServerList()
+	local now = os.clock()
+	if now - lastCacheUpdate < CACHE_TTL_SECONDS then
+		return cachedServerList
+	end
+	
+	if isUpdatingCache then
+		return cachedServerList
+	end
+	
+	isUpdatingCache = true
+	task.spawn(function()
+		local servers = buildServerEntries()
+		cachedServerList = servers
+		lastCacheUpdate = os.clock()
+		isUpdatingCache = false
+	end)
+	
+	if #cachedServerList == 0 and lastCacheUpdate == 0 then
+		cachedServerList = buildServerEntries()
+		lastCacheUpdate = os.clock()
+		isUpdatingCache = false
+	end
+	
+	return cachedServerList
+end
+
 function ServerListFetcher.Init()
 	if initialized then
 		return
@@ -121,9 +162,8 @@ function ServerListFetcher.Init()
 	local getServersFunc = getOrCreateRemoteFunction(GET_SERVERS_RF_NAME)
 	local joinServerFunc = getOrCreateRemoteFunction(JOIN_SERVER_RF_NAME)
 
-	-- เมื่อ UI ฝั่งผู้เล่นขอข้อมูลมา ให้ทำงานฟังก์ชันนี้
 	getServersFunc.OnServerInvoke = function(_player)
-		return buildServerEntries()
+		return getCachedServerList()
 	end
 
 	joinServerFunc.OnServerInvoke = function(player: Player, jobId: string)
@@ -169,14 +209,22 @@ function ServerListFetcher.Init()
 			end
 		end
 
-		local teleportOk, teleportError = pcall(function()
+		local teleportOk, teleportResult = pcall(function()
 			local teleportOptions = Instance.new("TeleportOptions")
 			teleportOptions.ServerInstanceId = jobId
-			TeleportService:TeleportAsync(placeId, playersToTeleport, teleportOptions)
+			return TeleportService:TeleportAsync(placeId, playersToTeleport, teleportOptions)
 		end)
+		
 		if not teleportOk then
-			warn("[ServerListFetcher] Join server failed", teleportError)
-			return { ok = false, message = "join_failed" }
+			warn("[ServerListFetcher] Join server failed:", tostring(teleportResult))
+			local errorMsg = "join_failed"
+			local errorStr = tostring(teleportResult)
+			if string.find(errorStr, "Full") then
+				errorMsg = "server_full"
+			elseif string.find(errorStr, "Unauthorized") then
+				errorMsg = "unauthorized"
+			end
+			return { ok = false, message = errorMsg }
 		end
 
 		return { ok = true }

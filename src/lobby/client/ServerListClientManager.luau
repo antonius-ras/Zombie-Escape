@@ -63,8 +63,9 @@ function ServerListClientManager.Init()
 		return
 	end
 
-	getServersRF = ReplicatedStorage:WaitForChild(GET_SERVERS_RF_NAME)
-	joinServerRF = ReplicatedStorage:WaitForChild(JOIN_SERVER_RF_NAME)
+	local remotesFolder = ReplicatedStorage:WaitForChild("shared"):WaitForChild("Remotes")
+	getServersRF = remotesFolder:WaitForChild(GET_SERVERS_RF_NAME)
+	joinServerRF = remotesFolder:WaitForChild(JOIN_SERVER_RF_NAME)
 	initialized = true
 end
 
