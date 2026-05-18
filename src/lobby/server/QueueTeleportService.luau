@@ -117,18 +117,28 @@ local function startPartyQueue(player: Player)
 		partyQueueStateByPartyId[partyData.partyId] = nil
 		firePartyStatus(memberUserIds, "party_queue_teleporting")
 
-		local partyPlayers, missingCount = getPartyPlayers(memberUserIds)
+		-- แก้ไข: ดึงรายชื่อสมาชิกที่อัปเดตที่สุดก่อนวาร์ป (ป้องกันกรณีมีคนออกระหว่างนับถอยหลัง)
+		local currentParty = PartyInviteService.GetPartyDataForUser(player.UserId)
+		local playersToTeleportIds = if currentParty then currentParty.memberUserIds else { player.UserId }
+
+		local partyPlayers, missingCount = getPartyPlayers(playersToTeleportIds)
 		if #partyPlayers == 0 or missingCount > 0 then
-			firePartyStatus(memberUserIds, "party_queue_failed", "Party member not ready")
+			firePartyStatus(playersToTeleportIds, "party_queue_failed", "Some party members are not ready")
 			return
 		end
 
 		local ok, err = pcall(function()
-			TeleportService:TeleportAsync(QueueConfig.GameplayPlaceId, partyPlayers)
+			local teleportOptions = Instance.new("TeleportOptions")
+			-- สำหรับกรณีที่มี partyId เราสามารถส่งไปเป็นข้อมูลได้ (ถ้าต้องการ)
+			if currentParty then
+				-- ตัวอย่าง: teleportOptions:SetTeleportData({ partyId = currentParty.partyId })
+			end
+			
+			TeleportService:TeleportAsync(QueueConfig.GameplayPlaceId, partyPlayers, teleportOptions)
 		end)
 		if not ok then
 			warn("[QueueTeleportService] Party teleport failed", err)
-			firePartyStatus(memberUserIds, "party_queue_failed", "Party teleport failed")
+			firePartyStatus(playersToTeleportIds, "party_queue_failed", "Party teleport failed")
 		end
 	end)
 end

@@ -391,6 +391,10 @@ PartyClientManager.OnInviteDeclined(function(_data)
 	refreshPartyUiAsync()
 end)
 
+PartyClientManager.OnOnlineFriendsUpdated(function(friends)
+	PlayMenuScreen.renderOnlineFriends(friends)
+end)
+
 QueueManager.OnPartyQueueStatus(function(status, secondsLeft, _message)
 	PlayMenuScreen.updatePartyQueueStatus(status, secondsLeft)
 

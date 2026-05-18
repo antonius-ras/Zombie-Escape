@@ -69,7 +69,9 @@ end
 local function heartbeatLoop()
 	while running do
 		for _, player in ipairs(Players:GetPlayers()) do
+			if not running then break end
 			writePresence(player.UserId)
+			task.wait(0.1) -- แก้ไข: หน่วงเวลาเล็กน้อยเพื่อไม่ให้เรียก MemoryStore ถี่เกินไป (Throttling)
 		end
 		task.wait(HEARTBEAT_INTERVAL_SECONDS)
 	end

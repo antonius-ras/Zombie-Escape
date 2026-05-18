@@ -239,7 +239,8 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 	local friends = {}
 	local friendIds = {}
 
-	repeat
+	-- แก้ไข: โหลดเพื่อนให้ครบทุกหน้า (Roblox Limit คือ 200 คน)
+	while true do
 		for _, friend in ipairs(pages:GetCurrentPage()) do
 			local displayName = friend.DisplayName
 			if type(displayName) ~= "string" or displayName == "" then
@@ -263,7 +264,7 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 		if not advancedOk then
 			break
 		end
-	until #friends >= 100
+	end
 
 	friendListCacheByUserId[userId] = {
 		expiresAt = os.clock() + FRIEND_LIST_CACHE_TTL_SECONDS,
@@ -601,30 +602,36 @@ local function handleLeaveParty(player: Player)
 		return { ok = false, message = "not_in_party" }
 	end
 
-	local party = getPartyById(partyId)
+	local updatedSnapshot = nil
+	local wasDeleted = false
+
+	local success = updateParty(partyId, function(party)
+		if not party then return nil end
+		
+		removeUser(party.memberUserIds, player.UserId)
+		clearPartyMemberName(party, player.UserId)
+		
+		if #party.memberUserIds == 0 then
+			wasDeleted = true
+			return nil -- ลบปาร์ตี้ถ้าไม่เหลือใคร
+		end
+
+		if party.leaderUserId == player.UserId then
+			party.leaderUserId = party.memberUserIds[1]
+		end
+		
+		updatedSnapshot = party
+		return party
+	end)
+
 	clearUserPartyId(player.UserId)
-
-	if not party then
-		broadcastPartyCleared({ player.UserId })
-		return { ok = true }
-	end
-
-	removeUser(party.memberUserIds, player.UserId)
-	clearPartyMemberName(party, player.UserId)
 	broadcastPartyCleared({ player.UserId })
 
-	if #party.memberUserIds == 0 then
-		deleteParty(party.partyId)
-		return { ok = true }
-	end
-
-	if party.leaderUserId == player.UserId then
-		party.leaderUserId = party.memberUserIds[1]
-	end
-
-	saveParty(party)
-	broadcastPartyUpdate(party)
-	return { ok = true, data = buildPartySnapshot(party) }
+	if not success then return { ok = false, message = "update_failed" } end
+	if wasDeleted then return { ok = true } end
+	
+	broadcastPartyUpdate(updatedSnapshot)
+	return { ok = true, data = buildPartySnapshot(updatedSnapshot) }
 end
 
 local function handleKickMember(player: Player, payload: {[string]: any})

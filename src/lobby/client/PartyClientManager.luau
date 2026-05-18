@@ -44,6 +44,23 @@ local function onPartyEvent(eventType: string, payload: any)
 	end
 end
 
+local onlineFriendsUpdateListeners: { (any) -> () } = {}
+local refreshRunning = false
+local FRIEND_REFRESH_INTERVAL = 15 -- อัปเดตทุก 15 วินาที
+
+local function startOnlineFriendsRefreshLoop()
+	if refreshRunning then return end
+	refreshRunning = true
+	
+	task.spawn(function()
+		while refreshRunning do
+			local friends = PartyClientManager.GetOnlineFriends()
+			emit(onlineFriendsUpdateListeners, friends)
+			task.wait(FRIEND_REFRESH_INTERVAL)
+		end
+	end)
+end
+
 function PartyClientManager.Init()
 	if initialized then
 		return
@@ -58,6 +75,13 @@ function PartyClientManager.Init()
 	partyEventRE.OnClientEvent:Connect(onPartyEvent)
 
 	initialized = true
+	
+	-- เริ่มต้นลูปอัปเดตเพื่อนออนไลน์อัตโนมัติ
+	startOnlineFriendsRefreshLoop()
+end
+
+function PartyClientManager.OnOnlineFriendsUpdated(listener: (any) -> ())
+	table.insert(onlineFriendsUpdateListeners, listener)
 end
 
 function PartyClientManager.GetOnlineFriends()
