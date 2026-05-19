@@ -234,9 +234,7 @@ local function captureSoloVisualState(instance: Instance)
 		state.ImageColor3 = instance.ImageColor3
 	end
 
-	
-
-	if next(state) then
+	if state.TextColor3 or state.ImageColor3 then
 		_soloVisualStates[instance] = state
 	end
 end

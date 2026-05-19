@@ -138,12 +138,12 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?)):
 			if not oldParty then return nil end
 			local updatedParty = transformFunction(oldParty)
 			
-			-- แก้ไข: ป้องกันการลบข้อมูลโดยไม่ได้ตั้งใจ (ถ้า transform คืน nil ให้คืนค่าเดิม)
-			if updatedParty == nil then
-				return oldParty
+			-- หากมีการคืนค่าข้อมูลใหม่ ให้จดบันทึกเวลาอัปเดต
+			if updatedParty then
+				updatedParty.updatedAt = os.time()
 			end
 			
-			updatedParty.updatedAt = os.time()
+			-- คืนค่า updatedParty ตรงๆ (ถ้าเป็น nil จะเป็นการลบ Key)
 			return updatedParty
 		end, PARTY_TTL_SECONDS)
 	end)
@@ -652,21 +652,21 @@ local function handleKickMember(player: Player, payload: {[string]: any})
 	local success = updateParty(partyId, function(party)
 		if not party then
 			errorMessage = "party_not_found"
-			return nil -- ยกเลิก (ปาร์ตี้หายไปแล้ว)
+			return nil
 		end
 		if party.leaderUserId ~= player.UserId then
 			errorMessage = "only_leader_can_kick"
-			return nil -- คืน nil ตรงนี้จะถูกดักจับใน updateParty ให้คืน oldParty (ไม่ลบ)
+			return party -- แก้ไข: คืนค่าเดิมเพื่อยกเลิก โดยไม่ลบปาร์ตี้ทิ้ง
 		end
 		if not containsUser(party.memberUserIds, targetUserId) then
 			errorMessage = "target_not_in_party"
-			return nil -- ไม่ลบ
+			return party -- แก้ไข: คืนค่าเดิม
 		end
 
 		removeUser(party.memberUserIds, targetUserId)
 		clearPartyMemberName(party, targetUserId)
 		
-		if #party.memberUserIds == 0 then return nil end -- ลบปาร์ตี้ถ้าไม่เหลือใคร
+		if #party.memberUserIds == 0 then return nil end -- ลบจริงๆ เมื่อไม่มีใครเหลือ
 		
 		updatedSnapshot = party
 		return party
