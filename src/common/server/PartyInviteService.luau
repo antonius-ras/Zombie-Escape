@@ -137,11 +137,14 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?)):
 		partyMap:UpdateAsync(partyId, function(oldParty)
 			if not oldParty then return nil end
 			local updatedParty = transformFunction(oldParty)
-			if updatedParty then
-				updatedParty.updatedAt = os.time()
-				return updatedParty
+			
+			-- แก้ไข: ป้องกันการลบข้อมูลโดยไม่ได้ตั้งใจ (ถ้า transform คืน nil ให้คืนค่าเดิม)
+			if updatedParty == nil then
+				return oldParty
 			end
-			return nil -- ถ้าคืนค่า nil แปลว่าให้ยกเลิกการอัปเดต หรือลบ (ขึ้นอยู่กับ logic)
+			
+			updatedParty.updatedAt = os.time()
+			return updatedParty
 		end, PARTY_TTL_SECONDS)
 	end)
 	return success
@@ -564,12 +567,12 @@ local function handleRespondInvite(player: Player, payload: {[string]: any})
 	local success = updateParty(invite.partyId, function(party)
 		if not party then
 			errorMessage = "party_not_found"
-			return nil -- ลบ/ไม่พบ (ตรงนี้ตั้งใจให้จบ)
+			return nil -- กรณีปาร์ตี้ไม่มีอยู่แล้ว (หรือถูกลบ) ให้คืน nil ตามเดิม
 		end
 
 		if #party.memberUserIds >= MAX_PARTY_SIZE then
 			errorMessage = "party_full"
-			return nil -- ในฟังก์ชัน updateParty ที่เราแก้ใหม่ จะคืน oldParty ให้แทนเพื่อไม่ให้ลบ
+			return party -- แก้ไข: คืนค่าเดิมกลับไปเพื่อยกเลิกการอัปเดต โดยไม่ลบปาร์ตี้ทิ้ง
 		end
 
 		if not containsUser(party.memberUserIds, player.UserId) then

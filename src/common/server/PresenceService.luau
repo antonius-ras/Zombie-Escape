@@ -102,7 +102,9 @@ end
 function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any}
 	local result: {[number]: any} = {}
 	local now = os.clock()
-
+	
+	-- แยกรายชื่อที่ต้องไปดึงจาก MemoryStore จริงๆ (ที่ไม่มีใน Cache)
+	local idsToFetch = {}
 	for _, userId in ipairs(userIds) do
 		local localPresence = localPresenceByUserId[userId]
 		if localPresence then
@@ -117,14 +119,27 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 			end
 			continue
 		end
+		
+		table.insert(idsToFetch, userId)
+	end
 
-		local ok, presence = pcall(function()
-			return presenceMap:GetAsync(getPresenceKey(userId))
-		end)
-		if ok then
-			cachePresenceRead(userId, presence)
-			if presence then
-				result[userId] = presence
+	-- ทยอยดึงข้อมูล (Staggered Fetch) เพื่อลด Latency และป้องกัน Rate Limit
+	if #idsToFetch > 0 then
+		for i, userId in ipairs(idsToFetch) do
+			local ok, presence = pcall(function()
+				return presenceMap:GetAsync(getPresenceKey(userId))
+			end)
+			
+			if ok then
+				cachePresenceRead(userId, presence)
+				if presence then
+					result[userId] = presence
+				end
+			end
+			
+			-- ถ้าดึงเยอะเกินไป ให้หยุดรอเป็นระยะเพื่อไม่ให้เซิร์ฟเวอร์ค้าง
+			if i % 10 == 0 then
+				task.wait(0.05)
 			end
 		end
 	end
