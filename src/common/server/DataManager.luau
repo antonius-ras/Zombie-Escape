@@ -321,7 +321,7 @@ function DataManager.AddInventoryItem(player: Player, itemName: string, amount: 
 	end
 
 	if type(amount) ~= "number" then
-		amount = 1
+		return false
 	end
 
 	ensureInventory(profile)
