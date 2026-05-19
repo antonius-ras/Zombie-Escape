@@ -46,7 +46,7 @@ end
 
 local onlineFriendsUpdateListeners: { (any) -> () } = {}
 local refreshRunning = false
-local FRIEND_REFRESH_INTERVAL = 15 -- อัปเดตทุก 15 วินาที
+local FRIEND_REFRESH_INTERVAL = 45 -- แก้ไข: เพิ่มเวลาหน่วงเพื่อลดภาระเซิร์ฟเวอร์ (Scalability)
 
 local function startOnlineFriendsRefreshLoop()
 	if refreshRunning then return end

@@ -564,12 +564,12 @@ local function handleRespondInvite(player: Player, payload: {[string]: any})
 	local success = updateParty(invite.partyId, function(party)
 		if not party then
 			errorMessage = "party_not_found"
-			return nil
+			return nil -- ลบ/ไม่พบ (ตรงนี้ตั้งใจให้จบ)
 		end
 
 		if #party.memberUserIds >= MAX_PARTY_SIZE then
 			errorMessage = "party_full"
-			return nil
+			return nil -- ในฟังก์ชัน updateParty ที่เราแก้ใหม่ จะคืน oldParty ให้แทนเพื่อไม่ให้ลบ
 		end
 
 		if not containsUser(party.memberUserIds, player.UserId) then
@@ -636,102 +636,94 @@ end
 
 local function handleKickMember(player: Player, payload: {[string]: any})
 	local targetUserId = tonumber(payload.targetUserId)
-	if not targetUserId then
+	if not targetUserId or targetUserId == player.UserId then
 		return { ok = false, message = "invalid_target" }
 	end
 
-	if targetUserId == player.UserId then
-		return { ok = false, message = "cannot_kick_self" }
-	end
-
 	local partyId = getUserPartyId(player.UserId)
-	if not partyId then
-		return { ok = false, message = "not_in_party" }
+	if not partyId then return { ok = false, message = "not_in_party" } end
+
+	local updatedSnapshot = nil
+	local errorMessage = nil
+
+	local success = updateParty(partyId, function(party)
+		if not party then
+			errorMessage = "party_not_found"
+			return nil -- ยกเลิก (ปาร์ตี้หายไปแล้ว)
+		end
+		if party.leaderUserId ~= player.UserId then
+			errorMessage = "only_leader_can_kick"
+			return nil -- คืน nil ตรงนี้จะถูกดักจับใน updateParty ให้คืน oldParty (ไม่ลบ)
+		end
+		if not containsUser(party.memberUserIds, targetUserId) then
+			errorMessage = "target_not_in_party"
+			return nil -- ไม่ลบ
+		end
+
+		removeUser(party.memberUserIds, targetUserId)
+		clearPartyMemberName(party, targetUserId)
+		
+		if #party.memberUserIds == 0 then return nil end -- ลบปาร์ตี้ถ้าไม่เหลือใคร
+		
+		updatedSnapshot = party
+		return party
+	end)
+
+	if not success or errorMessage then
+		return { ok = false, message = errorMessage or "update_failed" }
 	end
 
-	local party = getPartyById(partyId)
-	if not party then
-		clearUserPartyId(player.UserId)
-		return { ok = false, message = "party_not_found" }
-	end
-
-	if party.leaderUserId ~= player.UserId then
-		return { ok = false, message = "only_leader_can_kick" }
-	end
-
-	if not containsUser(party.memberUserIds, targetUserId) then
-		return { ok = false, message = "target_not_in_party" }
-	end
-
-	removeUser(party.memberUserIds, targetUserId)
-	clearPartyMemberName(party, targetUserId)
 	clearUserPartyId(targetUserId)
 	broadcastPartyCleared({ targetUserId })
-
-	if #party.memberUserIds == 0 then
-		deleteParty(party.partyId)
-		return { ok = true }
-	end
-
-	saveParty(party)
-	broadcastPartyUpdate(party)
-	return { ok = true, data = buildPartySnapshot(party) }
+	broadcastPartyUpdate(updatedSnapshot)
+	return { ok = true, data = buildPartySnapshot(updatedSnapshot) }
 end
 
 local function handleDisbandParty(player: Player)
 	local partyId = getUserPartyId(player.UserId)
-	if not partyId then
-		return { ok = false, message = "not_in_party" }
-	end
+	if not partyId then return { ok = false, message = "not_in_party" } end
 
-	local party = getPartyById(partyId)
-	if not party then
-		clearUserPartyId(player.UserId)
-		broadcastPartyCleared({ player.UserId })
-		return { ok = true }
-	end
+	local membersToClear = {}
+	local success = updateParty(partyId, function(party)
+		if not party then return nil end
+		if party.leaderUserId ~= player.UserId then return nil end -- ไม่ให้ลบถ้าไม่ใช่หัวหน้า
 
-	if party.leaderUserId ~= player.UserId then
-		return { ok = false, message = "only_leader_can_disband" }
-	end
+		membersToClear = table.clone(party.memberUserIds)
+		return nil -- คืนค่า nil เพื่อลบข้อมูลปาร์ตี้ออกจาก MemoryStore จริงๆ
+	end)
 
-	local memberUserIds = table.clone(party.memberUserIds)
-	for _, userId in ipairs(memberUserIds) do
+	if not success then return { ok = false, message = "disband_failed" } end
+
+	for _, userId in ipairs(membersToClear) do
 		clearUserPartyId(userId)
 	end
-
-	deleteParty(party.partyId)
-	broadcastPartyCleared(memberUserIds)
+	broadcastPartyCleared(membersToClear)
 	return { ok = true }
 end
 
 local function updatePartyForLeavingUser(userId: number)
 	local partyId = getUserPartyId(userId)
-	if not partyId then
-		return
-	end
+	if not partyId then return end
 
-	local party = getPartyById(partyId)
+	updateParty(partyId, function(party)
+		if not party then return nil end
+		removeUser(party.memberUserIds, userId)
+		clearPartyMemberName(party, userId)
+		
+		if #party.memberUserIds == 0 then return nil end -- ลบปาร์ตี้
+		
+		if party.leaderUserId == userId then
+			party.leaderUserId = party.memberUserIds[1]
+		end
+		
+		task.spawn(function()
+			broadcastPartyCleared({ userId })
+			broadcastPartyUpdate(party)
+		end)
+		
+		return party
+	end)
 	clearUserPartyId(userId)
-	if not party then
-		return
-	end
-
-	removeUser(party.memberUserIds, userId)
-	clearPartyMemberName(party, userId)
-	broadcastPartyCleared({ userId })
-
-	if #party.memberUserIds == 0 then
-		deleteParty(party.partyId)
-		return
-	end
-
-	if party.leaderUserId == userId then
-		party.leaderUserId = party.memberUserIds[1]
-	end
-
-	saveParty(party)
-	broadcastPartyUpdate(party)
 end
 
 local function onPartyMessage(message)

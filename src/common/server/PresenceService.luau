@@ -6,7 +6,7 @@ local MemoryStoreService = game:GetService("MemoryStoreService")
 local PRESENCE_MAP_NAME = "GlobalPresenceV1"
 local PRESENCE_TTL_SECONDS = 40
 local HEARTBEAT_INTERVAL_SECONDS = 10
-local PRESENCE_READ_CACHE_TTL_SECONDS = 3
+local PRESENCE_READ_CACHE_TTL_SECONDS = 15 -- แก้ไข: เพิ่มเวลา Cache เพื่อลดการเรียก MemoryStore ซ้ำซ้อน
 
 local initialized = false
 local running = false
