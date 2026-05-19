@@ -1,7 +1,7 @@
 -- ============================================================
 -- DataManager.luau | ModuleScript (Server-side)
--- หน้าที่: จัดการโหลด/เซฟข้อมูลผู้เล่นด้วย ProfileService
---          พร้อม sync ข้อมูล real-time ไปยัง client (2 scenes)
+-- Description: Manages loading/saving player data using ProfileService
+--              with real-time data synchronization to the client.
 -- ============================================================
 
 local DataManager = {}
@@ -11,11 +11,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ProfileService = require((ReplicatedStorage :: any).common.modules.ProfileService)
 
--- Remote Events สำหรับ sync ข้อมูลระหว่าง Server <-> Client
-
+-- Remote Events for Server <-> Client synchronization
 local remotes = ReplicatedStorage:FindFirstChild("common") and ReplicatedStorage.common:FindFirstChild("remotes")
 
--- สร้าง remotes folder ถ้ายังไม่มี
+-- Create remotes folder if it doesn't exist
 if not remotes then
 	local common = ReplicatedStorage:FindFirstChild("common") or Instance.new("Folder")
 	common.Name = "common"
@@ -36,21 +35,20 @@ local function getOrCreateRemote(className: string, name: string)
 	return r
 end
 
--- DataSync: Server → Client เมื่อข้อมูลเปลี่ยน
+-- DataSync: Server → Client when data updates
 local DataSyncEvent: RemoteEvent = getOrCreateRemote("RemoteEvent", "DataSync")
--- RequestData: Client ขอข้อมูลตอน scene โหลดใหม่
+-- RequestData: Client requests data upon scene reload
 local RequestDataFunction: RemoteFunction = getOrCreateRemote("RemoteFunction", "RequestData")
 
--- ============================================================
 -- Profile Template & Store
--- ============================================================
+
 local ProfileTemplate = {
 	Coins = 0,
 	TotalWins = 0,
 	TotalHits = 0,
 	KillsZombie = 0,
 	KillsHuman = 0,
-	inventory = {}, -- อนาคตอาจเพิ่มระบบไอเทม
+	inventory = {},
 }
 
 local ProfileStore = ProfileService.GetProfileStore("PlayerData_v1", ProfileTemplate)
@@ -60,11 +58,26 @@ local initialized = false
 local playerAddedConn: RBXScriptConnection?
 local playerRemovingConn: RBXScriptConnection?
 
--- ============================================================
 -- Internal Helpers
--- ============================================================
 
--- sync leaderstats (Coins เท่านั้น)
+-- Deep copy helper function to prevent external modification of table data references
+local function deepCopy<T>(original: T): T
+	if type(original) ~= "table" then
+		return original
+	end
+
+	local copy = {}
+	for k, v in pairs(original :: any) do
+		if type(v) == "table" then
+			copy[k] = deepCopy(v)
+		else
+			copy[k] = v
+		end
+	end
+	return copy :: any
+end
+
+-- Sync leaderstats (Coins only)
 local function syncLeaderstats(player: Player, profile)
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if not leaderstats then
@@ -77,7 +90,7 @@ local function syncLeaderstats(player: Player, profile)
 end
 
 local function cloneInventory(inventory)
-	return table.clone(inventory or {})
+	return deepCopy(inventory or {})
 end
 
 local function ensureInventory(profile)
@@ -86,7 +99,7 @@ local function ensureInventory(profile)
 	end
 end
 
--- ส่งข้อมูลทั้งหมดไปให้ client คนนั้น (ใช้ตอน scene เปลี่ยน หรือข้อมูล update)
+-- Synchronizes full data structure to the specific client
 local function syncClientFull(player: Player, profile)
 	DataSyncEvent:FireClient(player, {
 		Coins = profile.Data.Coins,
@@ -98,33 +111,30 @@ local function syncClientFull(player: Player, profile)
 	})
 end
 
--- ส่งเฉพาะ key ที่เปลี่ยน (ประหยัด bandwidth)
+-- Synchronizes a specific updated key to the client
 local function syncClientKey(player: Player, key: string, value: any)
 	DataSyncEvent:FireClient(player, { [key] = value })
 end
 
--- ============================================================
 -- Player Lifecycle
--- ============================================================
+
 local function PlayerAdded(player: Player)
 	local profile = ProfileStore:LoadProfileAsync("Player_" .. player.UserId)
 
 	if profile ~= nil then
 		profile:AddUserId(player.UserId)
-		profile:Reconcile() -- เติม key ที่หายไปจาก template อัตโนมัติ
+		profile:Reconcile() -- Fills missing profile template keys automatically
 		ensureInventory(profile)
 
 		profile:ListenToRelease(function()
 			Profiles[player] = nil
-			player:Kick(
-				"ข้อมูลกำลังโหลดซ้อนทับกัน กรุณาเข้าเกมใหม่อีกครั้ง"
-			)
+			player:Kick("Data session conflict detected. Please rejoin the game.")
 		end)
 
 		if player:IsDescendantOf(Players) then
 			Profiles[player] = profile
 
-			-- สร้าง leaderstats
+			-- Create Roblox leaderstats
 			local leaderstats = player:FindFirstChild("leaderstats") or Instance.new("Folder")
 			leaderstats.Name = "leaderstats"
 			leaderstats.Parent = player
@@ -137,17 +147,15 @@ local function PlayerAdded(player: Player)
 			end
 			coinsValue.Value = profile.Data.Coins
 
-			--  sync ข้อมูลทั้งหมดไปให้ client ทันทีที่โหลดเสร็จ
+			-- Full sync data to the client right after successful loading
 			syncClientFull(player, profile)
 
-			print("โหลดข้อมูลของ", player.Name, "สำเร็จ:", profile.Data)
+			print("Successfully loaded data for " .. player.Name .. ":", profile.Data)
 		else
 			profile:Release()
 		end
 	else
-		player:Kick(
-			"เซิร์ฟเวอร์ฐานข้อมูลขัดข้อง ไม่สามารถโหลดข้อมูลได้"
-		)
+		player:Kick("Database server failure. Failed to load profile data.")
 	end
 end
 
@@ -159,10 +167,8 @@ local function PlayerRemoving(player: Player)
 	end
 end
 
--- ============================================================
--- RequestData Handler (Client ขอข้อมูลตอน scene เปลี่ยน)
--- ใช้ใน Lobby และ Gameplay ตอน LocalScript เริ่มทำงาน
--- ============================================================
+-- RequestData Handler (Triggered by client scene changes)
+
 RequestDataFunction.OnServerInvoke = function(player: Player)
 	local profile = Profiles[player]
 	if profile == nil then
@@ -178,17 +184,16 @@ RequestDataFunction.OnServerInvoke = function(player: Player)
 	}
 end
 
--- ============================================================
 -- Public API
--- ============================================================
 
 function DataManager.GetPlayerProfile(player: Player)
 	return Profiles[player]
 end
 
+-- Returns a deep copy to prevent direct modification of profile data tables
 function DataManager.GetPlayerData(player: Player)
 	local profile = Profiles[player]
-	return profile and profile.Data or nil
+	return profile and deepCopy(profile.Data) or nil
 end
 
 function DataManager.GetPlayerValue(player: Player, key: string)
@@ -197,13 +202,22 @@ function DataManager.GetPlayerValue(player: Player, key: string)
 		return nil
 	end
 
-	return profile.Data[key]
+	local value = profile.Data[key]
+	if type(value) == "table" then
+		return deepCopy(value)
+	end
+	return value
 end
 
--- Set ค่า key ใดก็ได้ + auto sync
+-- Set key value with dynamic data type template verification
 function DataManager.SetPlayerValue(player: Player, key: string, value: any): boolean
 	local profile = Profiles[player]
 	if profile == nil then
+		return false
+	end
+
+	-- Validate value data type matching against ProfileTemplate
+	if ProfileTemplate[key] ~= nil and type(value) ~= type(ProfileTemplate[key]) then
 		return false
 	end
 
@@ -213,7 +227,6 @@ function DataManager.SetPlayerValue(player: Player, key: string, value: any): bo
 
 	profile.Data[key] = value
 
-	-- sync leaderstats ถ้าเป็น Coins
 	if key == "Coins" then
 		syncLeaderstats(player, profile)
 	end
@@ -222,7 +235,6 @@ function DataManager.SetPlayerValue(player: Player, key: string, value: any): bo
 		ensureInventory(profile)
 	end
 
-	--  ส่งเฉพาะ key ที่เปลี่ยนไปให้ client ทันที
 	if key == "inventory" then
 		syncClientKey(player, key, cloneInventory(profile.Data.inventory))
 	else
@@ -231,6 +243,7 @@ function DataManager.SetPlayerValue(player: Player, key: string, value: any): bo
 	return true
 end
 
+-- Protected tracking for callback modifications with warning output alerts
 function DataManager.UpdatePlayerData(player: Player, updater: (data: {}) -> ()): boolean
 	local profile = Profiles[player]
 	if profile == nil then
@@ -240,17 +253,17 @@ function DataManager.UpdatePlayerData(player: Player, updater: (data: {}) -> ())
 		return false
 	end
 
-	local success = pcall(updater, profile.Data)
+	local success, err = pcall(updater, profile.Data)
 	if success then
 		ensureInventory(profile)
 		syncLeaderstats(player, profile)
-
 		syncClientFull(player, profile)
+	else
+		warn("UpdatePlayerData failed for " .. player.Name .. ": " .. tostring(err))
 	end
 	return success
 end
 
--- add/remove Coins (atomic)
 function DataManager.AddCoins(player: Player, amount: number): boolean
 	local profile = Profiles[player]
 	if profile == nil then
@@ -290,6 +303,7 @@ function DataManager.GetInventory(player: Player)
 	return cloneInventory(profile.Data.inventory)
 end
 
+-- Clean entry validation updates for non-positive absolute amount counts
 function DataManager.SetInventoryItem(player: Player, itemName: string, amount: number): boolean
 	local profile = Profiles[player]
 	if profile == nil then
@@ -305,11 +319,17 @@ function DataManager.SetInventoryItem(player: Player, itemName: string, amount: 
 	end
 
 	ensureInventory(profile)
-	profile.Data.inventory[itemName] = amount
+	if amount <= 0 then
+		profile.Data.inventory[itemName] = nil
+	else
+		profile.Data.inventory[itemName] = amount
+	end
+
 	syncClientKey(player, "inventory", cloneInventory(profile.Data.inventory))
 	return true
 end
 
+-- Clean entry validation updates for non-positive relative item accumulation
 function DataManager.AddInventoryItem(player: Player, itemName: string, amount: number): boolean
 	local profile = Profiles[player]
 	if profile == nil then
@@ -326,7 +346,14 @@ function DataManager.AddInventoryItem(player: Player, itemName: string, amount: 
 
 	ensureInventory(profile)
 	local currentAmount = profile.Data.inventory[itemName] or 0
-	profile.Data.inventory[itemName] = currentAmount + amount
+	local newAmount = currentAmount + amount
+
+	if newAmount <= 0 then
+		profile.Data.inventory[itemName] = nil
+	else
+		profile.Data.inventory[itemName] = newAmount
+	end
+
 	syncClientKey(player, "inventory", cloneInventory(profile.Data.inventory))
 	return true
 end
@@ -357,7 +384,7 @@ function DataManager.RemoveInventoryItem(player: Player, itemName: string, amoun
 	return true
 end
 
--- Init / Destroy
+-- Lifecycle Management Initialization / Destruction
 
 function DataManager.Init()
 	if initialized then
