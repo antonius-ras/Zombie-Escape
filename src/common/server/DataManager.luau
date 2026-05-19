@@ -342,7 +342,7 @@ function DataManager.RemoveInventoryItem(player: Player, itemName: string, amoun
 	end
 
 	if type(amount) ~= "number" then
-		amount = 1
+		return false
 	end
 
 	ensureInventory(profile)
