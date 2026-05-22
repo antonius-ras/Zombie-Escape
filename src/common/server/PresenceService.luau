@@ -130,7 +130,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 
 	-- ดึงข้อมูลแบบ Batch (ทยอยดึงทีละกลุ่ม) เพื่อลดภาระ MemoryStore
 	if #idsToFetch > 0 then
-		local BATCH_SIZE = 5
+		local BATCH_SIZE = 50
 		for i = 1, #idsToFetch, BATCH_SIZE do
 			for j = i, math.min(i + BATCH_SIZE - 1, #idsToFetch) do
 				local userId = idsToFetch[j]

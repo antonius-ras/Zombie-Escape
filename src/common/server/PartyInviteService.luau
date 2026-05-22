@@ -527,9 +527,13 @@ local function handleSendInvite(player: Player, payload: {[string]: any})
 		expiresAt = os.time() + INVITE_TTL_SECONDS,
 	}
 
-	pcall(function()
+		local ok = pcall(function()
 		inviteMap:SetAsync(invite.inviteId, invite, INVITE_TTL_SECONDS)
 	end)
+
+	if not ok then
+		return { ok = false, message = "invite_save_failed" }
+	end
 
 	sendInviteToUser(invite)
 	return { ok = true, data = invite }
