@@ -168,8 +168,8 @@ local function runRealLoading(epoch: number)
 		end
 	end
 
-	-- ระบบ Failsafe: บังคับจบการโหลดถ้าผ่านไป 3 วินาที (กันค้าง)
-	task.delay(3, function()
+	-- ระบบ Failsafe: บังคับจบการโหลดถ้าผ่านไป 10 วินาที (กันค้าง)
+	task.delay(10, function()
 		isFinished = true
 	end)
 

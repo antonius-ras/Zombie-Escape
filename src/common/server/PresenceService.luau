@@ -128,12 +128,20 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 		table.insert(idsToFetch, userId)
 	end
 
-	-- ดึงข้อมูลแบบ Batch (ทยอยดึงทีละกลุ่ม) เพื่อลดภาระ MemoryStore
+	-- ดึงข้อมูลแบบคู่ขนาน (Parallel) พร้อมจำกัดจำนวน Request พร้อมกันเพื่อป้องกัน Rate Limit
 	if #idsToFetch > 0 then
-		local BATCH_SIZE = 50
-		for i = 1, #idsToFetch, BATCH_SIZE do
-			for j = i, math.min(i + BATCH_SIZE - 1, #idsToFetch) do
-				local userId = idsToFetch[j]
+		local MAX_CONCURRENT_REQUESTS = 15
+		local completedCount = 0
+		local currentIndex = 1
+		local totalToFetch = #idsToFetch
+
+		local function fetchNext()
+			local index = currentIndex
+			currentIndex += 1
+			if index > totalToFetch then return end
+
+			local userId = idsToFetch[index]
+			task.spawn(function()
 				local ok, presence = pcall(function()
 					return presenceMap:GetAsync(getPresenceKey(userId))
 				end)
@@ -142,8 +150,20 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 					cachePresenceRead(userId, presence)
 					if presence then result[userId] = presence end
 				end
-			end
-			-- พัก 1 เฟรมทุกๆ การดึงครบ 1 Batch
+				
+				completedCount += 1
+				fetchNext() -- เริ่มดึงคนถัดไปเมื่อคนนี้ดึงเสร็จ
+			end)
+		end
+
+		-- สั่งเริ่มงานพร้อมกัน (สูงสุด MAX_CONCURRENT_REQUESTS)
+		for i = 1, math.min(MAX_CONCURRENT_REQUESTS, totalToFetch) do
+			fetchNext()
+		end
+
+		-- รอจนกว่างานทั้งหมดจะเสร็จ (หรือ Timeout 5 วินาที)
+		local startTime = os.clock()
+		while completedCount < totalToFetch and (os.clock() - startTime) < 5 do
 			task.wait()
 		end
 	end

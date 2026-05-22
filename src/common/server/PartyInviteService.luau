@@ -53,9 +53,12 @@ local function publishEvent(payload: {[string]: any})
 	if payload.originJobId == nil then
 		payload.originJobId = game.JobId
 	end
-	pcall(function()
+	local success, err = pcall(function()
 		MessagingService:PublishAsync(PARTY_TOPIC_NAME, payload)
 	end)
+	if not success then
+		warn(string.format("[PartyInviteService] Failed to publish event: %s", tostring(err)))
+	end
 end
 
 local function containsUser(userIds: {number}, userId: number): boolean
