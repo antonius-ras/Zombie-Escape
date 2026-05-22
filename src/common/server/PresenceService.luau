@@ -6,7 +6,7 @@ local MemoryStoreService = game:GetService("MemoryStoreService")
 local PRESENCE_MAP_NAME = "GlobalPresenceV1"
 local PRESENCE_TTL_SECONDS = 40
 local HEARTBEAT_INTERVAL_SECONDS = 10
-local PRESENCE_READ_CACHE_TTL_SECONDS = 15 -- แก้ไข: เพิ่มเวลา Cache เพื่อลดการเรียก MemoryStore ซ้ำซ้อน
+local PRESENCE_READ_CACHE_TTL_SECONDS = 15 -- Cache duration increased to reduce quota usage
 
 local initialized = false
 local running = false
@@ -74,7 +74,7 @@ local function heartbeatLoop()
 		for _, player in ipairs(Players:GetPlayers()) do
 			if not running then break end
 			writePresence(player.UserId)
-			task.wait(0.1) -- แก้ไข: หน่วงเวลาเล็กน้อยเพื่อไม่ให้เรียก MemoryStore ถี่เกินไป (Throttling)
+			task.wait(0.1) -- Throttle to avoid MemoryStore limits
 		end
 		task.wait(HEARTBEAT_INTERVAL_SECONDS)
 	end
@@ -107,7 +107,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 	local now = os.clock()
 	
 	local idsToFetch = {}
-	local seen = {} -- ป้องกันการดึงข้อมูลซ้ำ (Deduplication)
+	local seen = {} -- Deduplication
 	
 	for _, userId in ipairs(userIds) do
 		if seen[userId] then continue end
@@ -128,7 +128,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 		table.insert(idsToFetch, userId)
 	end
 
-	-- ดึงข้อมูลแบบคู่ขนาน (Parallel) พร้อมจำกัดจำนวน Request พร้อมกันเพื่อป้องกัน Rate Limit
+	-- Parallel fetch with strict concurrency limits to prevent quota exhaustion
 	if #idsToFetch > 0 then
 		local MAX_CONCURRENT_REQUESTS = 15
 		local completedCount = 0
@@ -152,16 +152,14 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 				end
 				
 				completedCount += 1
-				fetchNext() -- เริ่มดึงคนถัดไปเมื่อคนนี้ดึงเสร็จ
+				fetchNext()
 			end)
 		end
 
-		-- สั่งเริ่มงานพร้อมกัน (สูงสุด MAX_CONCURRENT_REQUESTS)
 		for i = 1, math.min(MAX_CONCURRENT_REQUESTS, totalToFetch) do
 			fetchNext()
 		end
 
-		-- รอจนกว่างานทั้งหมดจะเสร็จ (หรือ Timeout 5 วินาที)
 		local startTime = os.clock()
 		while completedCount < totalToFetch and (os.clock() - startTime) < 5 do
 			task.wait()

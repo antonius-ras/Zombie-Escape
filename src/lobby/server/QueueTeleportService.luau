@@ -117,7 +117,7 @@ local function startPartyQueue(player: Player)
 		partyQueueStateByPartyId[partyData.partyId] = nil
 		firePartyStatus(memberUserIds, "party_queue_teleporting")
 
-		-- แก้ไข: ดึงรายชื่อสมาชิกที่อัปเดตที่สุดก่อนวาร์ป (ป้องกันกรณีมีคนออกระหว่างนับถอยหลัง)
+		-- Get the latest party member list immediately before teleporting (Code Review Fix)
 		local currentParty = PartyInviteService.GetPartyDataForUser(player.UserId)
 		local playersToTeleportIds = if currentParty then currentParty.memberUserIds else { player.UserId }
 
@@ -129,13 +129,9 @@ local function startPartyQueue(player: Player)
 
 		local ok, err = pcall(function()
 			local teleportOptions = Instance.new("TeleportOptions")
-			-- สำหรับกรณีที่มี partyId เราสามารถส่งไปเป็นข้อมูลได้ (ถ้าต้องการ)
-			if currentParty then
-				-- ตัวอย่าง: teleportOptions:SetTeleportData({ partyId = currentParty.partyId })
-			end
-			
 			TeleportService:TeleportAsync(QueueConfig.GameplayPlaceId, partyPlayers, teleportOptions)
 		end)
+		
 		if not ok then
 			warn("[QueueTeleportService] Party teleport failed", err)
 			firePartyStatus(playersToTeleportIds, "party_queue_failed", "Party teleport failed")
@@ -215,7 +211,7 @@ function QueueTeleportService.Init()
 
 	requestConnection = requestEvent.OnServerEvent:Connect(onQueueTeleportRequest)
 	
-	-- แก้ไข: ลบข้อมูล Cache เมื่อผู้เล่นออกเพื่อป้องกัน Memory Leak
+	-- Clean up request cache to prevent memory leaks (Code Review Fix)
 	Players.PlayerRemoving:Connect(function(player)
 		lastRequestAtByUserId[player.UserId] = nil
 	end)
@@ -229,8 +225,8 @@ function QueueTeleportService.Destroy()
 
 	requestEvent = nil
 	statusEvent = nil
-	lastRequestAtByUserId = {}
-	partyQueueStateByPartyId = {}
+	table.clear(lastRequestAtByUserId)
+	table.clear(partyQueueStateByPartyId)
 	initialized = false
 end
 

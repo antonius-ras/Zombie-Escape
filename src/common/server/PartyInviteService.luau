@@ -36,6 +36,7 @@ local partyEventRE: RemoteEvent?
 local displayNameCache: {[number]: { name: string, expiresAt: number }} = {}
 local friendListCacheByUserId: {[number]: { expiresAt: number, friends: {any}, friendIds: {number} }} = {}
 local userPartyIdCacheByUserId: {[number]: { expiresAt: number, value: string? }} = {}
+local lastInviteAtByUserId: {[number]: number} = {}
 
 local function getOrCreateRemote(parent: Instance, className: string, name: string): Instance
 	local existing = parent:FindFirstChild(name)
@@ -507,6 +508,13 @@ local function handleGetParty(player: Player)
 end
 
 local function handleSendInvite(player: Player, payload: {[string]: any})
+	local now = os.clock()
+	local lastInviteAt = lastInviteAtByUserId[player.UserId]
+	if lastInviteAt and now - lastInviteAt < 2 then
+		return { ok = false, message = "too_fast" }
+	end
+	lastInviteAtByUserId[player.UserId] = now
+
 	local toUserId = tonumber(payload.toUserId)
 	if not toUserId then
 		return { ok = false, message = "invalid_target" }
@@ -893,6 +901,7 @@ function PartyInviteService.Init()
 	playerRemovingConn = Players.PlayerRemoving:Connect(function(player)
 		friendListCacheByUserId[player.UserId] = nil
 		displayNameCache[player.UserId] = nil -- ป้องกัน Memory Leak จากผู้เล่นที่ออกจากเซิร์ฟเวอร์
+		lastInviteAtByUserId[player.UserId] = nil -- ลบ Rate Limit Cache
 		updatePartyForLeavingUser(player.UserId)
 	end)
 	
