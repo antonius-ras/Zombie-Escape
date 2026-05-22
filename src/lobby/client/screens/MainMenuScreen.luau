@@ -5,8 +5,6 @@
 -- ============================================================
 
 local TweenService = game:GetService("TweenService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UIAnimationHelper = require(ReplicatedStorage.common.modules.UIAnimationHelper)
 
 local MainMenuScreen = {}
 
@@ -23,6 +21,7 @@ local _onMusicPressed: () -> ()
 local _onPlayPressed:  () -> ()
 
 local _basePositions: {[GuiObject]: UDim2} = {}
+local _activeTweens: {[Instance]: Tween} = {}
 local _transitionEpoch = 0
 local _isInteractive = false
 local _isQueueMode = false
@@ -33,6 +32,28 @@ local BG_TRANSPARENCY = 0.8
 -- ============================================================
 -- Utils (private)
 -- ============================================================
+
+local function safeTween(obj, info, goals)
+	local g = {}
+	for k, v in pairs(goals) do
+		if pcall(function() return obj[k] end) then g[k] = v end
+	end
+	if next(g) then
+		local prev = _activeTweens[obj]
+		if prev then
+			prev:Cancel()
+		end
+		local t = TweenService:Create(obj, info, g)
+		_activeTweens[obj] = t
+		t.Completed:Connect(function()
+			if _activeTweens[obj] == t then
+				_activeTweens[obj] = nil
+			end
+		end)
+		t:Play()
+		return t
+	end
+end
 
 local function nextEpoch(): number
 	_transitionEpoch += 1
@@ -53,6 +74,84 @@ local function getBasePosition(obj: GuiObject): UDim2
 	end
 	_basePositions[obj] = obj.Position
 	return obj.Position
+end
+
+local function bounceIn(obj: GuiObject, delayTime: number?, epoch: number?)
+	local targetPos = getBasePosition(obj)
+	
+	-- คำนวณจุดเริ่มต้นให้อยู่นอกจอ (ถ้าอยู่ครึ่งซ้ายให้มาจากซ้าย ถ้าอยู่ครึ่งขวาให้มาจากขวา)
+	local isLeft = targetPos.X.Scale < 0.5
+	local startXOffset = isLeft and -1.5 or 1.5
+	local startPos = UDim2.new(targetPos.X.Scale + startXOffset, targetPos.X.Offset, targetPos.Y.Scale, targetPos.Y.Offset)
+	
+	obj.Position    = startPos
+	obj.Visible     = true
+	if pcall(function() return obj.BackgroundTransparency end) then
+		obj.BackgroundTransparency = 1
+	end
+	
+	-- เริ่มต้นให้โปร่งใสทั้งหมด
+	for _, child in ipairs(obj:GetDescendants()) do
+		if child:IsA("TextLabel") or child:IsA("TextButton") then
+			child.TextTransparency = 1
+		elseif child:IsA("ImageLabel") or child:IsA("ImageButton") then
+			child.ImageTransparency = 1
+		end
+	end
+	
+	task.delay(delayTime or 0, function()
+		if not isEpochCurrent(epoch) then
+			return
+		end
+		-- เลื่อนเข้ามาแบบสมูท (Exponential)
+		safeTween(obj,
+			TweenInfo.new(0.8, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out),
+			{ Position = targetPos, BackgroundTransparency = BG_TRANSPARENCY }
+		)
+		-- ค่อยๆ จางตัวอักษรขึ้นมา
+		for _, child in ipairs(obj:GetDescendants()) do
+			safeTween(child,
+				TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ TextTransparency = 0, ImageTransparency = 0 }
+			)
+		end
+	end)
+end
+
+local function bounceOut(obj: GuiObject, delayTime: number?, epoch: number?, callback: (() -> ())?)
+	local basePos = getBasePosition(obj)
+	
+	-- คำนวณจุดที่จะเลื่อนออกไป (ออกทางเดิมที่เข้ามา)
+	local isLeft = basePos.X.Scale < 0.5
+	local endXOffset = isLeft and -1.5 or 1.5
+	local targetPos = UDim2.new(basePos.X.Scale + endXOffset, basePos.X.Offset, basePos.Y.Scale, basePos.Y.Offset)
+	
+	task.delay(delayTime or 0, function()
+		if not isEpochCurrent(epoch) then
+			return
+		end
+		-- เลื่อนออกแบบพุ่งตัว (Exponential In)
+		local t = safeTween(obj,
+			TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.In),
+			{ Position = targetPos, BackgroundTransparency = 1 }
+		)
+		for _, child in ipairs(obj:GetDescendants()) do
+			safeTween(child,
+				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ TextTransparency = 1, ImageTransparency = 1 }
+			)
+		end
+		task.delay(0.65, function()
+			if not isEpochCurrent(epoch) then
+				return
+			end
+			obj.Position = basePos
+			obj.Visible = false
+			if callback then
+				callback()
+			end
+		end)
+	end)
 end
 
 local function setInteractive(isInteractive: boolean)
@@ -95,29 +194,55 @@ function MainMenuScreen.init(
 	_basePositions[_musicBtn] = _musicBtn.Position
 	_basePositions[_playBtn] = _playBtn.Position
 
-	-- Initial State
+	-- ซ่อนไว้ก่อน (show() จะเปิด)
 	_menuBtn.Visible  = false
 	_musicBtn.Visible = false
 	_playBtn.Visible  = false
 
-	-- Hover
-	UIAnimationHelper.applyHover(_menuBtn)
-	UIAnimationHelper.applyHover(_musicBtn)
-	UIAnimationHelper.applyHover(_playBtn)
+	-- Hover effects
+	local function addHover(btn: GuiButton)
+		local origSize: UDim2
+		btn.MouseEnter:Connect(function()
+			if not _isInteractive then return end
+			if not origSize then origSize = btn.Size end
+			safeTween(btn, TweenInfo.new(0.18), {
+				Size = origSize + UDim2.new(0, 10, 0, 4),
+			})
+		end)
+		btn.MouseLeave:Connect(function()
+			if not _isInteractive then return end
+			if origSize then
+				safeTween(btn, TweenInfo.new(0.18), { Size = origSize })
+			end
+		end)
+	end
+	addHover(_menuBtn)
+	addHover(_musicBtn)
+	addHover(_playBtn)
 
 	-- Connections
 	_menuBtn.MouseButton1Click:Connect(function()
-		if not _isInteractive then return end
+		if not _isInteractive then
+			return
+		end
 		if _onMenuPressed then _onMenuPressed() end
 	end)
+
 	_musicBtn.MouseButton1Click:Connect(function()
-		if not _isInteractive then return end
+		if not _isInteractive then
+			return
+		end
 		if _onMusicPressed then _onMusicPressed() end
 	end)
+
 	_playBtn.MouseButton1Click:Connect(function()
-		if not _isInteractive then return end
+		if not _isInteractive then
+			return
+		end
 		if _isQueueMode then
-			if _onQueueCancelPressed then _onQueueCancelPressed() end
+			if _onQueueCancelPressed then
+				_onQueueCancelPressed()
+			end
 			return
 		end
 		setInteractive(false)
@@ -132,15 +257,17 @@ function MainMenuScreen.show(onShown: (() -> ())?)
 	setPlayButtonText(_defaultPlayText)
 	setInteractive(false)
 	_gui.Enabled = true
-	
-	UIAnimationHelper.slideIn(_menuBtn,  "Left", 0)
-	UIAnimationHelper.slideIn(_musicBtn, "Left", 0.1)
-	UIAnimationHelper.slideIn(_playBtn,  "Right", 0.2)
-	
-	task.delay(0.8, function()
-		if not isEpochCurrent(epoch) then return end
+	bounceIn(_menuBtn,  0, epoch)
+	bounceIn(_musicBtn, 0.1, epoch)
+	bounceIn(_playBtn,  0.2, epoch)
+	task.delay(1.1, function()
+		if not isEpochCurrent(epoch) then
+			return
+		end
 		setInteractive(true)
-		if onShown then onShown() end
+		if onShown then
+			onShown()
+		end
 	end)
 end
 
@@ -149,15 +276,17 @@ function MainMenuScreen.hide(onHidden: (() -> ())?)
 	_isQueueMode = false
 	_onQueueCancelPressed = nil
 	setInteractive(false)
-	
-	UIAnimationHelper.slideOut(_playBtn,  "Right")
-	UIAnimationHelper.slideOut(_musicBtn, "Left")
-	UIAnimationHelper.slideOut(_menuBtn,  "Left")
-	
-	task.delay(0.8, function()
-		if not isEpochCurrent(epoch) then return end
+	bounceOut(_playBtn,  0, epoch)
+	bounceOut(_musicBtn, 0.08, epoch)
+	bounceOut(_menuBtn,  0.16, epoch)
+	task.delay(0.5, function()
+		if not isEpochCurrent(epoch) then
+			return
+		end
 		_gui.Enabled = false
-		if onHidden then onHidden() end
+		if onHidden then
+			onHidden()
+		end
 	end)
 end
 
@@ -175,20 +304,26 @@ function MainMenuScreen.showQueueButton(initialText: string, onCancelPressed: ()
 	_playBtn.Position = getBasePosition(_playBtn)
 	setPlayButtonText(initialText)
 
-	UIAnimationHelper.slideIn(_playBtn, "Right")
-	task.delay(0.8, function()
-		if not isEpochCurrent(epoch) then return end
+	bounceIn(_playBtn, 0, epoch)
+	task.delay(0.6, function()
+		if not isEpochCurrent(epoch) then
+			return
+		end
 		setInteractive(true)
 	end)
 end
 
 function MainMenuScreen.updateQueueButton(text: string)
-	if not _isQueueMode then return end
+	if not _isQueueMode then
+		return
+	end
 	setPlayButtonText(text)
 end
 
 function MainMenuScreen.setQueueTeleporting(text: string)
-	if not _isQueueMode then return end
+	if not _isQueueMode then
+		return
+	end
 	setPlayButtonText(text)
 	setInteractive(false)
 end
@@ -196,13 +331,19 @@ end
 function MainMenuScreen.hideQueueButton(onHidden: (() -> ())?)
 	local epoch = nextEpoch()
 	setInteractive(false)
-	UIAnimationHelper.slideOut(_playBtn, "Right", function()
+	bounceOut(_playBtn, 0, epoch)
+	task.delay(0.45, function()
+		if not isEpochCurrent(epoch) then
+			return
+		end
 		_playBtn.Visible = false
 		setPlayButtonText(_defaultPlayText)
 		_isQueueMode = false
 		_onQueueCancelPressed = nil
 		_gui.Enabled = false
-		if onHidden then onHidden() end
+		if onHidden then
+			onHidden()
+		end
 	end)
 end
 
