@@ -255,14 +255,17 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 		if not advancedOk then break end
 	end
 
-	-- ขั้นตอนที่ 2: ดึง DisplayName แบบ Batch (ครั้งเดียวจบ)
+	-- ขั้นตอนที่ 2: ดึง DisplayName แบบ Batch (แบ่งกลุ่มละ 100 ตามกฎ Roblox)
 	if #idsToResolve > 0 then
-		pcall(function()
-			local userInfos = Players:GetUserInfosByUserIdsAsync(idsToResolve)
-			for _, info in ipairs(userInfos) do
-				displayNameCache[info.Id] = { name = info.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
-			end
-		end)
+		for i = 1, #idsToResolve, 100 do
+			pcall(function()
+				local chunk = table.move(idsToResolve, i, math.min(i + 99, #idsToResolve), 1, {})
+				local userInfos = Players:GetUserInfosByUserIdsAsync(chunk)
+				for _, info in ipairs(userInfos) do
+					displayNameCache[info.Id] = { name = info.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
+				end
+			end)
+		end
 	end
 
 	-- ขั้นตอนที่ 3: ประกอบร่างข้อมูลส่งกลับ

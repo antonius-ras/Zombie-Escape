@@ -132,32 +132,52 @@ end
 -- ============================================================
 
 local function runRealLoading(epoch: number)
-	local totalSteps = 20
+	local assetsToLoad = {}
+	-- โหลดเฉพาะ Asset ใน UI เพื่อป้องกันหน้าค้าง (Infinite Yield) จากการสแกนทั้งเกม
+	for _, v in ipairs(_gui.Parent:GetDescendants()) do
+		if v:IsA("ImageLabel") or v:IsA("ImageButton") or v:IsA("Sound") then
+			table.insert(assetsToLoad, v)
+		end
+	end
+
+	local total  = math.max(#assetsToLoad, 1)
 	local loaded = 0
+	local lastUiUpdate = 0
+	local isFinished = false
 
 	local function getText(p: number)
-		if p < 0.25 then return "LOADING..."
-		elseif p < 0.50 then return "LOADING MAP..."
-		elseif p < 0.75 then return "LOADING MODELS..."
+		if p < 0.25 then return "LOADING UI..."
+		elseif p < 0.50 then return "LOADING ASSETS..."
+		elseif p < 0.75 then return "LOADING ICONS..."
 		elseif p < 0.95 then return "LOADING SOUNDS..."
 		else return "ALMOST DONE..."
 		end
 	end
 
-	while loaded < totalSteps do
-		if not isEpochCurrent(epoch) then
-			return
-		end
-		loaded += 1
-		local progress = loaded / totalSteps
-		_loadingFill.Size = UDim2.new(progress, 0, _fillSizeY.Scale, _fillSizeY.Offset)
-		_loadingText.Text = getText(progress)
-		task.wait(0.1) -- จำลองการโหลด 2 วินาที (20 * 0.1)
+	-- ระบบ Failsafe: บังคับจบการโหลดถ้าผ่านไป 3 วินาที (กันค้าง)
+	task.delay(3, function()
+		isFinished = true
+	end)
+
+	task.spawn(function()
+		ContentProvider:PreloadAsync(assetsToLoad, function(_id, _status)
+			if not isEpochCurrent(epoch) or isFinished then return end
+			loaded += 1
+			local now = os.clock()
+			if now - lastUiUpdate < 1 / 30 and loaded < total then return end
+			lastUiUpdate = now
+			local progress = loaded / total
+			_loadingFill.Size = UDim2.new(progress, 0, _fillSizeY.Scale, _fillSizeY.Offset)
+			_loadingText.Text = getText(progress)
+		end)
+		isFinished = true
+	end)
+
+	while not isFinished and isEpochCurrent(epoch) do
+		task.wait(0.1)
 	end
 
-	if not isEpochCurrent(epoch) then
-		return
-	end
+	if not isEpochCurrent(epoch) then return end
 
 	safeTween(_loadingFill,
 		TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
@@ -252,12 +272,27 @@ function IntroScreen.init(gui: ScreenGui, onPlayPressed: () -> ())
 	end)
 end
 
+local Lighting = game:GetService("Lighting")
+local _spookyCC: ColorCorrectionEffect? = nil
+
 -- เริ่ม loading และแสดง UI
 function IntroScreen.start()
 	local epoch = nextEpoch()
 	_isInteractive = false
 	_playButton.Active = false
 	_gui.Enabled = true
+	
+	-- สร้างเอฟเฟกต์แสงหน้ากลัว (Spooky Lighting)
+	if not _spookyCC then
+		_spookyCC = Instance.new("ColorCorrectionEffect")
+		_spookyCC.Name = "IntroSpookyEffect"
+		_spookyCC.Brightness = 0
+		_spookyCC.Contrast = 0.2
+		_spookyCC.Saturation = -0.4
+		_spookyCC.TintColor = Color3.fromRGB(215, 250, 255) -- โทนเขียวมืดๆ
+		_spookyCC.Parent = Lighting
+	end
+	
 	task.spawn(function()
 		runRealLoading(epoch)
 		if not isEpochCurrent(epoch) then
@@ -278,6 +313,24 @@ function IntroScreen.hide(onHidden: (() -> ())?)
 	_pulseEpoch += 1
 	_isInteractive = false
 	_playButton.Active = false
+	
+	-- ค่อยๆ ปิดเอฟเฟกต์แสงน่ากลัว (Fade out spooky lighting)
+	if _spookyCC then
+		local ccTween = TweenService:Create(_spookyCC, TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+			Brightness = 0,
+			Contrast = 0,
+			Saturation = 0,
+			TintColor = Color3.fromRGB(255, 255, 255)
+		})
+		ccTween.Completed:Connect(function()
+			if _spookyCC then
+				_spookyCC:Destroy()
+				_spookyCC = nil
+			end
+		end)
+		ccTween:Play()
+	end
+
 	bounceOut(_playButton, 0, epoch, function()
 		_playButton.Visible = false
 		_gui.Enabled = false
