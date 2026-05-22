@@ -247,7 +247,7 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 			if not friend.DisplayName or friend.DisplayName == "" then
 				table.insert(idsToResolve, friend.Id)
 			else
-				displayNameCache[friend.Id] = friend.DisplayName
+				displayNameCache[friend.Id] = { name = friend.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
 			end
 		end
 		if pages.IsFinished then break end
@@ -260,7 +260,7 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 		pcall(function()
 			local userInfos = Players:GetUserInfosByUserIdsAsync(idsToResolve)
 			for _, info in ipairs(userInfos) do
-				displayNameCache[info.Id] = info.DisplayName
+				displayNameCache[info.Id] = { name = info.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
 			end
 		end)
 	end
@@ -269,7 +269,7 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 	for _, fId in ipairs(friendIds) do
 		table.insert(friends, {
 			userId = fId,
-			name = displayNameCache[fId] or tostring(fId),
+			name = if displayNameCache[fId] then displayNameCache[fId].name else tostring(fId),
 		})
 	end
 
