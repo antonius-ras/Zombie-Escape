@@ -103,7 +103,6 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 	local result: {[number]: any} = {}
 	local now = os.clock()
 	
-	-- แยกรายชื่อที่ต้องไปดึงจาก MemoryStore จริงๆ (ที่ไม่มีใน Cache)
 	local idsToFetch = {}
 	for _, userId in ipairs(userIds) do
 		local localPresence = localPresenceByUserId[userId]
@@ -114,33 +113,39 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 
 		local cachedEntry = presenceReadCacheByUserId[userId]
 		if cachedEntry and cachedEntry.expiresAt > now then
-			if cachedEntry.found then
-				result[userId] = cachedEntry.value
-			end
+			if cachedEntry.found then result[userId] = cachedEntry.value end
 			continue
 		end
 		
 		table.insert(idsToFetch, userId)
 	end
 
-	-- ทยอยดึงข้อมูล (Staggered Fetch) เพื่อลด Latency และป้องกัน Rate Limit
+	-- แก้ไข: ดึงข้อมูลแบบขนาน (Parallel) เพื่อความรวดเร็วสูงสุด
 	if #idsToFetch > 0 then
-		for i, userId in ipairs(idsToFetch) do
-			local ok, presence = pcall(function()
-				return presenceMap:GetAsync(getPresenceKey(userId))
+		local threads = 0
+		local completed = 0
+
+		for _, userId in ipairs(idsToFetch) do
+			threads += 1
+			task.spawn(function()
+				local ok, presence = pcall(function()
+					return presenceMap:GetAsync(getPresenceKey(userId))
+				end)
+				if ok then
+					cachePresenceRead(userId, presence)
+					if presence then result[userId] = presence end
+				end
+				completed += 1
 			end)
 			
-			if ok then
-				cachePresenceRead(userId, presence)
-				if presence then
-					result[userId] = presence
-				end
-			end
-			
-			-- ถ้าดึงเยอะเกินไป ให้หยุดรอเป็นระยะเพื่อไม่ให้เซิร์ฟเวอร์ค้าง
-			if i % 10 == 0 then
-				task.wait(0.05)
-			end
+			-- จำกัดจำนวนคำขอพร้อมกันไม่ให้เยอะเกินไป (Batching)
+			if threads % 15 == 0 then task.wait() end
+		end
+
+		-- รอจนกว่าจะดึงครบทุกคน (หรือ timeout)
+		local startWait = os.clock()
+		while completed < threads and os.clock() - startWait < 3 do
+			task.wait()
 		end
 	end
 

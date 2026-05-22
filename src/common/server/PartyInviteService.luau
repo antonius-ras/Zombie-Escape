@@ -241,32 +241,40 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 
 	local friends = {}
 	local friendIds = {}
+	local idsToResolve = {}
 
-	-- แก้ไข: โหลดเพื่อนให้ครบทุกหน้า (Roblox Limit คือ 200 คน)
+	-- ขั้นตอนที่ 1: รวบรวม ID เพื่อนทั้งหมด
 	while true do
 		for _, friend in ipairs(pages:GetCurrentPage()) do
-			local displayName = friend.DisplayName
-			if type(displayName) ~= "string" or displayName == "" then
-				displayName = resolveDisplayName(friend.Id, nil)
-			end
-
-			table.insert(friends, {
-				userId = friend.Id,
-				name = displayName,
-			})
 			table.insert(friendIds, friend.Id)
+			-- ถ้าไม่มี DisplayName มาให้ (หรือเป็นค่าว่าง) ให้จดไว้ไปดึงแบบ Batch
+			if not friend.DisplayName or friend.DisplayName == "" then
+				table.insert(idsToResolve, friend.Id)
+			else
+				displayNameCache[friend.Id] = friend.DisplayName
+			end
 		end
+		if pages.IsFinished then break end
+		local advancedOk = pcall(function() pages:AdvanceToNextPageAsync() end)
+		if not advancedOk then break end
+	end
 
-		if pages.IsFinished then
-			break
-		end
-
-		local advancedOk = pcall(function()
-			pages:AdvanceToNextPageAsync()
+	-- ขั้นตอนที่ 2: ดึง DisplayName แบบ Batch (ครั้งเดียวจบ)
+	if #idsToResolve > 0 then
+		pcall(function()
+			local userInfos = Players:GetUserInfosByUserIdsAsync(idsToResolve)
+			for _, info in ipairs(userInfos) do
+				displayNameCache[info.Id] = info.DisplayName
+			end
 		end)
-		if not advancedOk then
-			break
-		end
+	end
+
+	-- ขั้นตอนที่ 3: ประกอบร่างข้อมูลส่งกลับ
+	for _, fId in ipairs(friendIds) do
+		table.insert(friends, {
+			userId = fId,
+			name = displayNameCache[fId] or tostring(fId),
+		})
 	end
 
 	friendListCacheByUserId[userId] = {
@@ -708,25 +716,36 @@ local function updatePartyForLeavingUser(userId: number)
 	local partyId = getUserPartyId(userId)
 	if not partyId then return end
 
-	updateParty(partyId, function(party)
+	local updatedSnapshot = nil
+	local wasDeleted = false
+
+	local success = updateParty(partyId, function(party)
 		if not party then return nil end
 		removeUser(party.memberUserIds, userId)
 		clearPartyMemberName(party, userId)
 		
-		if #party.memberUserIds == 0 then return nil end -- ลบปาร์ตี้
-		
+		if #party.memberUserIds == 0 then
+			wasDeleted = true
+			return nil -- ลบปาร์ตี้
+		end
+
 		if party.leaderUserId == userId then
 			party.leaderUserId = party.memberUserIds[1]
 		end
 		
-		task.spawn(function()
-			broadcastPartyCleared({ userId })
-			broadcastPartyUpdate(party)
-		end)
-		
+		updatedSnapshot = party
 		return party
 	end)
+	
 	clearUserPartyId(userId)
+
+	-- แก้ไข: ย้าย Side Effects ออกมาข้างนอกลูปการเซฟ (Pure Function)
+	if success then
+		broadcastPartyCleared({ userId })
+		if not wasDeleted and updatedSnapshot then
+			broadcastPartyUpdate(updatedSnapshot)
+		end
+	end
 end
 
 local function onPartyMessage(message)
