@@ -104,7 +104,12 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 	local now = os.clock()
 	
 	local idsToFetch = {}
+	local seen = {} -- ป้องกันการดึงข้อมูลซ้ำ (Deduplication)
+	
 	for _, userId in ipairs(userIds) do
+		if seen[userId] then continue end
+		seen[userId] = true
+		
 		local localPresence = localPresenceByUserId[userId]
 		if localPresence then
 			result[userId] = localPresence
