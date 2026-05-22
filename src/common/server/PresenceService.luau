@@ -125,31 +125,22 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 		table.insert(idsToFetch, userId)
 	end
 
-	-- แก้ไข: ดึงข้อมูลแบบขนาน (Parallel) เพื่อความรวดเร็วสูงสุด
+	-- ดึงข้อมูลแบบ Batch (ทยอยดึงทีละกลุ่ม) เพื่อลดภาระ MemoryStore
 	if #idsToFetch > 0 then
-		local threads = 0
-		local completed = 0
-
-		for _, userId in ipairs(idsToFetch) do
-			threads += 1
-			task.spawn(function()
+		local BATCH_SIZE = 5
+		for i = 1, #idsToFetch, BATCH_SIZE do
+			for j = i, math.min(i + BATCH_SIZE - 1, #idsToFetch) do
+				local userId = idsToFetch[j]
 				local ok, presence = pcall(function()
 					return presenceMap:GetAsync(getPresenceKey(userId))
 				end)
+				
 				if ok then
 					cachePresenceRead(userId, presence)
 					if presence then result[userId] = presence end
 				end
-				completed += 1
-			end)
-			
-			-- จำกัดจำนวนคำขอพร้อมกันไม่ให้เยอะเกินไป (Stay within MemoryStore limits)
-			if threads % 8 == 0 then task.wait() end
-		end
-
-		-- รอจนกว่าจะดึงครบทุกคน (หรือ timeout)
-		local startWait = os.clock()
-		while completed < threads and os.clock() - startWait < 3 do
+			end
+			-- พัก 1 เฟรมทุกๆ การดึงครบ 1 Batch
 			task.wait()
 		end
 	end

@@ -240,7 +240,9 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 	local idsToResolve = {}
 
 	-- ขั้นตอนที่ 1: รวบรวม ID เพื่อนทั้งหมด
+	local pageCount = 0
 	while true do
+		pageCount += 1
 		for _, friend in ipairs(pages:GetCurrentPage()) do
 			table.insert(friendIds, friend.Id)
 			-- ถ้าไม่มี DisplayName มาให้ (หรือเป็นค่าว่าง) ให้จดไว้ไปดึงแบบ Batch
@@ -250,7 +252,7 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 				displayNameCache[friend.Id] = { name = friend.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
 			end
 		end
-		if pages.IsFinished then break end
+		if pages.IsFinished or pageCount >= 5 then break end
 		local advancedOk = pcall(function() pages:AdvanceToNextPageAsync() end)
 		if not advancedOk then break end
 	end

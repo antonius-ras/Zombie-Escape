@@ -133,8 +133,8 @@ end
 
 local function runRealLoading(epoch: number)
 	local assetsToLoad = {}
-	-- โหลดเฉพาะ Asset ใน UI เพื่อป้องกันหน้าค้าง (Infinite Yield) จากการสแกนทั้งเกม
-	for _, v in ipairs(_gui.Parent:GetDescendants()) do
+	-- โหลดเฉพาะ Asset ใน UI เพื่อป้องกันหน้าค้าง (Infinite Yield) และลดภาระเครื่อง
+	for _, v in ipairs(_gui:GetDescendants()) do
 		if v:IsA("ImageLabel") or v:IsA("ImageButton") or v:IsA("Sound") then
 			table.insert(assetsToLoad, v)
 		end
