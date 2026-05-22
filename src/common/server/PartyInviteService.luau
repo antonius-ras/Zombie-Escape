@@ -293,6 +293,27 @@ end
 local function buildPartySnapshot(party: {[string]: any}): {[string]: any}
 	local members = {}
 	ensureMemberNames(party)
+	
+	-- แก้ไข: ดึงชื่อคนที่หายไปแบบรวบยอด (Batch) ป้องกันเน็ตเวิร์กคอขวด
+	local idsToResolve = {}
+	for _, userId in ipairs(party.memberUserIds) do
+		if not getPartyMemberName(party, userId) then
+			local cached = displayNameCache[userId]
+			if not (cached and cached.expiresAt > os.clock()) then
+				table.insert(idsToResolve, userId)
+			end
+		end
+	end
+	
+	if #idsToResolve > 0 then
+		pcall(function()
+			local userInfos = Players:GetUserInfosByUserIdsAsync(idsToResolve)
+			for _, info in ipairs(userInfos) do
+				displayNameCache[info.Id] = { name = info.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
+			end
+		end)
+	end
+
 	for _, userId in ipairs(party.memberUserIds) do
 		local name = resolveDisplayName(userId, getPartyMemberName(party, userId))
 		setPartyMemberName(party, userId, name)
@@ -527,7 +548,7 @@ local function handleSendInvite(player: Player, payload: {[string]: any})
 		expiresAt = os.time() + INVITE_TTL_SECONDS,
 	}
 
-		local ok = pcall(function()
+	local ok = pcall(function()
 		inviteMap:SetAsync(invite.inviteId, invite, INVITE_TTL_SECONDS)
 	end)
 
