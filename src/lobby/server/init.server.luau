@@ -1,5 +1,4 @@
 local ServerScriptService = game:GetService("ServerScriptService")
-local commonServer = (ServerScriptService :: any).common
 
 local function requireModule(moduleScript: ModuleScript, moduleName: string)
 	local ok, result = pcall(require, moduleScript)
@@ -26,12 +25,14 @@ local function initModule(moduleTable: any, moduleName: string, ...)
 	return result
 end
 
-local DataManager = requireModule(commonServer.DataManager, "DataManager")
-local ServerListFetcher = requireModule(commonServer.ServerListFetcher, "ServerListFetcher")
-local PresenceService = requireModule(commonServer.PresenceService, "PresenceService")
-local PartyInviteService = requireModule(commonServer.PartyInviteService, "PartyInviteService")
+local commonServer = (ServerScriptService :: any).common
 
-initModule(PresenceService, "PresenceService", "lobby")
-initModule(DataManager, "DataManager")
-initModule(ServerListFetcher, "ServerListFetcher")
-initModule(PartyInviteService, "PartyInviteService")
+local dataManager = requireModule(commonServer.DataManager, "DataManager")
+local profileZombieEscape = requireModule(commonServer.ProfileZombieEscape.ProfileZombieEscape, "ProfileZombieEscape")
+local partyManager = requireModule(commonServer.PartyManager, "PartyManager")
+local serverListFetcher = requireModule(commonServer.ServerListFetcher, "ServerListFetcher")
+
+initModule(dataManager, "DataManager")
+initModule(profileZombieEscape, "ProfileZombieEscape")
+initModule(partyManager, "PartyManager")
+initModule(serverListFetcher, "ServerListFetcher")

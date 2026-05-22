@@ -1,162 +1,101 @@
---!strict
--- ============================================================
--- UIAnimationHelper.luau | ModuleScript
--- วางไว้ใน: src/common/shared/modules/ (สร้างถ้ายังไม่มี)
--- หน้าที่: ตัวช่วยจัดการอนิเมชั่น UI ให้ลื่นไหลและเป็นมาตรฐาน
--- ============================================================
-
 local TweenService = game:GetService("TweenService")
 
 local UIAnimationHelper = {}
 
--- ── Configuration ──────────────────────────────────────────
-local BOUNCE_INFO = TweenInfo.new(0.65, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local CINEMATIC_INFO = TweenInfo.new(0.8, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
-local FAST_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local DEFAULT_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- ── Private State ──────────────────────────────────────────
-local activeTweens: {[Instance]: {[string]: Tween}} = {}
-
--- ── Private Utils ──────────────────────────────────────────
-local function cancelExistingTween(instance: Instance, property: string)
-	if activeTweens[instance] and activeTweens[instance][property] then
-		activeTweens[instance][property]:Cancel()
-		activeTweens[instance][property] = nil
+local function playTween(instance: Instance, tweenInfo: TweenInfo, properties, onComplete)
+	local tween = TweenService:Create(instance, tweenInfo, properties)
+	if onComplete then
+		tween.Completed:Connect(onComplete)
 	end
-end
-
--- ── Public API ─────────────────────────────────────────────
-
--- Tween แบบพื้นฐานที่ช่วยจัดการ Cleanup ให้อัตโนมัติ และเช็ค Property ให้ก่อน
-function UIAnimationHelper.tween(instance: Instance, info: TweenInfo, goals: {[string]: any})
-	local safeGoals = {}
-	for property, value in pairs(goals) do
-		local success = pcall(function()
-			return (instance :: any)[property]
-		end)
-		
-		if success then
-			cancelExistingTween(instance, property)
-			safeGoals[property] = value
-		end
-	end
-
-	if not next(safeGoals) then return nil end
-	local tween = TweenService:Create(instance, info, safeGoals)
-	
-	if not activeTweens[instance] then activeTweens[instance] = {} end
-	for property, _ in pairs(safeGoals) do activeTweens[instance][property] = tween end
-
-	tween.Completed:Connect(function()
-		if activeTweens[instance] then
-			for property, t in pairs(activeTweens[instance]) do
-				if t == tween then activeTweens[instance][property] = nil end
-			end
-			if not next(activeTweens[instance]) then activeTweens[instance] = nil end
-		end
-	end)
-
 	tween:Play()
 	return tween
 end
 
--- อนิเมชั่นเลื่อนเข้าจากนอกจอ (Cinematic Slide In)
-function UIAnimationHelper.slideIn(obj: GuiObject, direction: "Left" | "Right" | "Top" | "Bottom", delayTime: number?)
-	local originalPos = obj:GetAttribute("OriginalPosition") or obj.Position
-	if not obj:GetAttribute("OriginalPosition") then
-		obj:SetAttribute("OriginalPosition", originalPos)
+function UIAnimationHelper.tween(instance: Instance, tweenInfo: TweenInfo, properties)
+	return playTween(instance, tweenInfo, properties)
+end
+
+function UIAnimationHelper.applyHover(button: GuiObject)
+	if not button:IsA("GuiButton") then
+		return
 	end
 
-	local offscreenPos: UDim2
-	if direction == "Left" then offscreenPos = UDim2.fromScale(-1.2, originalPos.Y.Scale)
-	elseif direction == "Right" then offscreenPos = UDim2.fromScale(1.2, originalPos.Y.Scale)
-	elseif direction == "Top" then offscreenPos = UDim2.fromScale(originalPos.X.Scale, -1.2)
-	else offscreenPos = UDim2.fromScale(originalPos.X.Scale, 1.2) end
+	local baseSize = button.Size
+	local hoverSize = UDim2.new(baseSize.X.Scale * 1.04, baseSize.X.Offset, baseSize.Y.Scale * 1.04, baseSize.Y.Offset)
 
-	obj.Position = offscreenPos
+	button.MouseEnter:Connect(function()
+		playTween(button, TweenInfo.new(0.12, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+			Size = hoverSize,
+		})
+	end)
+
+	button.MouseLeave:Connect(function()
+		playTween(button, TweenInfo.new(0.12, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+			Size = baseSize,
+		})
+	end)
+end
+
+function UIAnimationHelper.slideIn(obj: GuiObject, direction: string, delayTime: number?)
+	local basePos = obj.Position
+	local offset = UDim2.new(0, 0, 0, 0)
+
+	if direction == "Left" then
+		offset = UDim2.fromOffset(-140, 0)
+	elseif direction == "Right" then
+		offset = UDim2.fromOffset(140, 0)
+	elseif direction == "Top" then
+		offset = UDim2.fromOffset(0, -120)
+	elseif direction == "Bottom" then
+		offset = UDim2.fromOffset(0, 120)
+	end
+
 	obj.Visible = true
-	
+	obj.Position = basePos + offset
+	obj.BackgroundTransparency = 1
+
 	task.delay(delayTime or 0, function()
-		UIAnimationHelper.tween(obj, CINEMATIC_INFO, {
-			Position = originalPos,
-			GroupTransparency = 0,
+		playTween(obj, DEFAULT_TWEEN, {
+			Position = basePos,
+			BackgroundTransparency = 0.8,
 		})
 	end)
 end
 
--- อนิเมชั่นเลื่อนออก (Cinematic Slide Out)
-function UIAnimationHelper.slideOut(obj: GuiObject, direction: "Left" | "Right" | "Top" | "Bottom", callback: (() -> ())?)
-	local originalPos = obj:GetAttribute("OriginalPosition") or obj.Position
-	local offscreenPos: UDim2
-	if direction == "Left" then offscreenPos = UDim2.fromScale(-1.2, originalPos.Y.Scale)
-	elseif direction == "Right" then offscreenPos = UDim2.fromScale(1.2, originalPos.Y.Scale)
-	elseif direction == "Top" then offscreenPos = UDim2.fromScale(originalPos.X.Scale, -1.2)
-	else offscreenPos = UDim2.fromScale(originalPos.X.Scale, 1.2) end
+function UIAnimationHelper.slideOut(obj: GuiObject, direction: string, onDone: (() -> ())?)
+	local targetPos = obj.Position
 
-	local tween = UIAnimationHelper.tween(obj, CINEMATIC_INFO, {
-		Position = offscreenPos,
-		GroupTransparency = 1,
-	})
-
-	if callback then
-		tween.Completed:Connect(function()
-			obj.Visible = false
-			obj.Position = originalPos
-			callback()
-		end)
+	if direction == "Left" then
+		targetPos += UDim2.fromOffset(-140, 0)
+	elseif direction == "Right" then
+		targetPos += UDim2.fromOffset(140, 0)
+	elseif direction == "Top" then
+		targetPos += UDim2.fromOffset(0, -120)
+	elseif direction == "Bottom" then
+		targetPos += UDim2.fromOffset(0, 120)
 	end
+
+	playTween(obj, DEFAULT_TWEEN, {
+		Position = targetPos,
+		BackgroundTransparency = 1,
+	}, onDone)
 end
 
--- อนิเมชั่นเด้งเข้า (Bounce In)
-function UIAnimationHelper.bounceIn(obj: GuiObject, startPosOffset: UDim2?)
-	local originalPos = obj:GetAttribute("OriginalPosition") or obj.Position
-	if not obj:GetAttribute("OriginalPosition") then
-		obj:SetAttribute("OriginalPosition", originalPos)
-	end
-
-	local offset = startPosOffset or UDim2.fromScale(0, 0.1)
-	obj.Position = (originalPos :: UDim2) + offset
+function UIAnimationHelper.bounceIn(obj: GuiObject)
 	obj.Visible = true
-	
-	UIAnimationHelper.tween(obj, BOUNCE_INFO, {
-		Position = originalPos,
+	obj.AnchorPoint = Vector2.new(0.5, 0.5)
+	obj.Size = UDim2.fromScale(0, 0)
+	playTween(obj, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Size = UDim2.fromScale(0.32, 0.12),
 	})
 end
 
--- อนิเมชั่นเด้งออก (Bounce Out)
-function UIAnimationHelper.bounceOut(obj: GuiObject, endPosOffset: UDim2?, callback: (() -> ())?)
-	local originalPos = obj:GetAttribute("OriginalPosition") or obj.Position
-	local offset = endPosOffset or UDim2.fromScale(0, 0.1)
-	
-	local tween = UIAnimationHelper.tween(obj, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-		Position = (originalPos :: UDim2) + offset,
-	})
-
-	if callback then
-		tween.Completed:Connect(function()
-			obj.Visible = false
-			obj.Position = originalPos :: UDim2
-			callback()
-		end)
-	end
-end
-
--- Hover Effect แบบนุ่มนวล (Spring-like)
-function UIAnimationHelper.applyHover(btn: GuiButton, scaleMultiplier: number?)
-	local mult = scaleMultiplier or 1.05
-	local originalSize = btn.Size
-	
-	btn.MouseEnter:Connect(function()
-		UIAnimationHelper.tween(btn, TweenInfo.new(0.3, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out, 0, false, 0.1), {
-			Size = UDim2.new(originalSize.X.Scale * mult, originalSize.X.Offset * mult, originalSize.Y.Scale * mult, originalSize.Y.Offset * mult)
-		})
-	end)
-
-	btn.MouseLeave:Connect(function()
-		UIAnimationHelper.tween(btn, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-			Size = originalSize
-		})
-	end)
+function UIAnimationHelper.bounceOut(obj: GuiObject, targetSize: UDim2?, onDone: (() -> ())?)
+	playTween(obj, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		Size = targetSize or UDim2.fromScale(0, 0),
+	}, onDone)
 end
 
 return UIAnimationHelper

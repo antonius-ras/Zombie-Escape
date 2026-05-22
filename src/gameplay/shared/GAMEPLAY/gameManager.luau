@@ -2,6 +2,7 @@ local GameManager = {}
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Teams = game:GetService("Teams")
 local Workspace = game:GetService("Workspace")
 
@@ -22,7 +23,7 @@ local ZombiesTeam = Teams:WaitForChild("Zombies")
 local ZombiesSpawn = Workspace:WaitForChild("ZombiesSpawn")
 local HumanSpawn = Workspace:WaitForChild("HumanSpawn")
 
-local MIN_PLAYERS = 2
+local MIN_PLAYERS = if RunService:IsStudio() then 1 else 2
 local COUNTDOWN_TIME = 10
 local ROUND_TIME = 300
 local ZOMBIE_RATIO = 0.2
