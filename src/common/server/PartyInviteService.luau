@@ -18,6 +18,7 @@ local INVITE_TTL_SECONDS = 30
 local MAX_PARTY_SIZE = 4
 local FRIEND_LIST_CACHE_TTL_SECONDS = 15
 local USER_PARTY_CACHE_TTL_SECONDS = 5
+local DISPLAY_NAME_CACHE_TTL_SECONDS = 3600 -- เพิ่มค่าคงที่สำหรับจำเวลาชื่อผู้เล่น
 
 local REQUEST_RF_NAME = "PartyRequestRF"
 local PARTY_EVENT_RE_NAME = "PartyEventRE"
@@ -32,7 +33,7 @@ local inviteMap = MemoryStoreService:GetHashMap(INVITE_MAP_NAME)
 
 local requestRF: RemoteFunction?
 local partyEventRE: RemoteEvent?
-local displayNameCache: {[number]: string} = {}
+local displayNameCache: {[number]: { name: string, expiresAt: number }} = {}
 local friendListCacheByUserId: {[number]: { expiresAt: number, friends: {any}, friendIds: {number} }} = {}
 local userPartyIdCacheByUserId: {[number]: { expiresAt: number, value: string? }} = {}
 
@@ -194,13 +195,13 @@ local function resolveDisplayName(userId: number, cachedName: string?): string
 	end
 
 	local cached = displayNameCache[userId]
-	if type(cached) == "string" and cached ~= "" then
-		return cached
+	if cached and type(cached.name) == "string" and cached.name ~= "" and cached.expiresAt > os.clock() then
+		return cached.name
 	end
 
 	local player = Players:GetPlayerByUserId(userId)
 	if player and type(player.DisplayName) == "string" and player.DisplayName ~= "" then
-		displayNameCache[userId] = player.DisplayName
+		displayNameCache[userId] = { name = player.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
 		return player.DisplayName
 	end
 
@@ -212,7 +213,7 @@ local function resolveDisplayName(userId: number, cachedName: string?): string
 		if type(info) == "table" then
 			local displayName = info.DisplayName
 			if type(displayName) == "string" and displayName ~= "" then
-				displayNameCache[userId] = displayName
+				displayNameCache[userId] = { name = displayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
 				return displayName
 			end
 		end
@@ -585,7 +586,7 @@ local function handleRespondInvite(player: Player, payload: {[string]: any})
 		party.memberNames[tostring(player.UserId)] = player.DisplayName
 		party.memberNames[tostring(invite.fromUserId)] = invite.fromName
 		
-		errorMessage = nil -- Clear error on successful pass (important for retries)
+		errorMessage = nil -- Clear error on successful pass
 		return party
 	end)
 
@@ -648,10 +649,9 @@ local function handleKickMember(player: Player, payload: {[string]: any})
 	local partyId = getUserPartyId(player.UserId)
 	if not partyId then return { ok = false, message = "not_in_party" } end
 
-	local updatedSnapshot = nil
 	local errorMessage = nil
 
-	local success = updateParty(partyId, function(party)
+	local success, updatedPartySnapshot = updateParty(partyId, function(party)
 		if not party then
 			errorMessage = "party_not_found"
 			return nil
@@ -670,18 +670,18 @@ local function handleKickMember(player: Player, payload: {[string]: any})
 		
 		if #party.memberUserIds == 0 then return nil end -- ลบจริงๆ เมื่อไม่มีใครเหลือ
 		
-		updatedSnapshot = party
+		errorMessage = nil
 		return party
 	end)
 
-	if not success or errorMessage then
+	if not success or errorMessage or not updatedPartySnapshot then
 		return { ok = false, message = errorMessage or "update_failed" }
 	end
 
 	clearUserPartyId(targetUserId)
 	broadcastPartyCleared({ targetUserId })
-	broadcastPartyUpdate(updatedSnapshot)
-	return { ok = true, data = buildPartySnapshot(updatedSnapshot) }
+	broadcastPartyUpdate(updatedPartySnapshot)
+	return { ok = true, data = buildPartySnapshot(updatedPartySnapshot) }
 end
 
 local function handleDisbandParty(player: Player)
@@ -710,10 +710,9 @@ local function updatePartyForLeavingUser(userId: number)
 	local partyId = getUserPartyId(userId)
 	if not partyId then return end
 
-	local updatedSnapshot = nil
 	local wasDeleted = false
 
-	local success = updateParty(partyId, function(party)
+	local success, updatedPartySnapshot = updateParty(partyId, function(party)
 		if not party then return nil end
 		removeUser(party.memberUserIds, userId)
 		clearPartyMemberName(party, userId)
@@ -727,7 +726,6 @@ local function updatePartyForLeavingUser(userId: number)
 			party.leaderUserId = party.memberUserIds[1]
 		end
 		
-		updatedSnapshot = party
 		return party
 	end)
 	
@@ -736,8 +734,8 @@ local function updatePartyForLeavingUser(userId: number)
 	-- แก้ไข: ย้าย Side Effects ออกมาข้างนอกลูปการเซฟ (Pure Function)
 	if success then
 		broadcastPartyCleared({ userId })
-		if not wasDeleted and updatedSnapshot then
-			broadcastPartyUpdate(updatedSnapshot)
+		if not wasDeleted and updatedPartySnapshot then
+			broadcastPartyUpdate(updatedPartySnapshot)
 		end
 	end
 end
@@ -858,7 +856,34 @@ function PartyInviteService.Init()
 	
 	playerRemovingConn = Players.PlayerRemoving:Connect(function(player)
 		friendListCacheByUserId[player.UserId] = nil
+		displayNameCache[player.UserId] = nil -- ป้องกัน Memory Leak จากผู้เล่นที่ออกจากเซิร์ฟเวอร์
 		updatePartyForLeavingUser(player.UserId)
+	end)
+	
+	-- ลูปสำหรับทำความสะอาด Cache ทุกๆ 60 วินาที
+	task.spawn(function()
+		while initialized do
+			task.wait(60)
+			local now = os.clock()
+			
+			for userId, data in pairs(displayNameCache) do
+				if data.expiresAt and data.expiresAt < now then
+					displayNameCache[userId] = nil
+				end
+			end
+			
+			for userId, data in pairs(friendListCacheByUserId) do
+				if data.expiresAt and data.expiresAt < now then
+					friendListCacheByUserId[userId] = nil
+				end
+			end
+			
+			for userId, data in pairs(userPartyIdCacheByUserId) do
+				if data.expiresAt and data.expiresAt < now then
+					userPartyIdCacheByUserId[userId] = nil
+				end
+			end
+		end
 	end)
 end
 
@@ -882,6 +907,7 @@ function PartyInviteService.Destroy()
 	initialized = false
 	table.clear(friendListCacheByUserId)
 	table.clear(userPartyIdCacheByUserId)
+	table.clear(displayNameCache) -- ล้าง Cache เมื่อปิดระบบ
 end
 
 function PartyInviteService.GetPartyDataForUser(userId: number): {[string]: any}?
