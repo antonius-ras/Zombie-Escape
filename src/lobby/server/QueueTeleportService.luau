@@ -214,6 +214,11 @@ function QueueTeleportService.Init()
 	statusEvent = getOrCreateRemote(remotesFolder, STATUS_REMOTE_NAME)
 
 	requestConnection = requestEvent.OnServerEvent:Connect(onQueueTeleportRequest)
+	
+	-- แก้ไข: ลบข้อมูล Cache เมื่อผู้เล่นออกเพื่อป้องกัน Memory Leak
+	Players.PlayerRemoving:Connect(function(player)
+		lastRequestAtByUserId[player.UserId] = nil
+	end)
 end
 
 function QueueTeleportService.Destroy()

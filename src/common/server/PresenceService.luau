@@ -138,8 +138,8 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 				completed += 1
 			end)
 			
-			-- จำกัดจำนวนคำขอพร้อมกันไม่ให้เยอะเกินไป (Batching)
-			if threads % 15 == 0 then task.wait() end
+			-- จำกัดจำนวนคำขอพร้อมกันไม่ให้เยอะเกินไป (Stay within MemoryStore limits)
+			if threads % 8 == 0 then task.wait() end
 		end
 
 		-- รอจนกว่าจะดึงครบทุกคน (หรือ timeout)

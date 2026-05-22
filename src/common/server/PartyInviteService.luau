@@ -150,12 +150,6 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?)):
 	return success
 end
 
-local function deleteParty(partyId: string)
-	pcall(function()
-		partyMap:RemoveAsync(partyId)
-	end)
-end
-
 local function ensureMemberNames(party: {[string]: any}): {[string]: string}
 	if type(party.memberNames) ~= "table" then
 		party.memberNames = {}
