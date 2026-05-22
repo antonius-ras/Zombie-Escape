@@ -32,25 +32,20 @@ local BG_TRANSPARENCY = 0.8
 -- ============================================================
 
 local function safeTween(obj, info, goals)
-	local g = {}
-	for k, v in pairs(goals) do
-		if pcall(function() return obj[k] end) then g[k] = v end
+	-- ปรับแก้ตาม Code Review: เอา pcall ออกเพื่อเพิ่ม Performance (เราจะเช็ค IsA() จากข้างนอกแทน)
+	local prev = _activeTweens[obj]
+	if prev then
+		prev:Cancel()
 	end
-	if next(g) then
-		local prev = _activeTweens[obj]
-		if prev then
-			prev:Cancel()
+	local t = TweenService:Create(obj, info, goals)
+	_activeTweens[obj] = t
+	t.Completed:Connect(function()
+		if _activeTweens[obj] == t then
+			_activeTweens[obj] = nil
 		end
-		local t = TweenService:Create(obj, info, g)
-		_activeTweens[obj] = t
-		t.Completed:Connect(function()
-			if _activeTweens[obj] == t then
-				_activeTweens[obj] = nil
-			end
-		end)
-		t:Play()
-		return t
-	end
+	end)
+	t:Play()
+	return t
 end
 
 local function nextEpoch(): number
@@ -90,10 +85,17 @@ local function bounceIn(obj: GuiObject, delayTime: number?, epoch: number?)
 			{ Position = targetPos, BackgroundTransparency = BG_TRANSPARENCY }
 		)
 		for _, child in ipairs(obj:GetDescendants()) do
-			safeTween(child,
-				TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ TextTransparency = 0, ImageTransparency = 0 }
-			)
+			if child:IsA("TextLabel") or child:IsA("TextButton") then
+				safeTween(child,
+					TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ TextTransparency = 0 }
+				)
+			elseif child:IsA("ImageLabel") or child:IsA("ImageButton") then
+				safeTween(child,
+					TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ ImageTransparency = 0 }
+				)
+			end
 		end
 	end)
 end
@@ -110,10 +112,17 @@ local function bounceOut(obj: GuiObject, delayTime: number?, epoch: number?, cal
 			{ Position = targetPos, BackgroundTransparency = 1 }
 		)
 		for _, child in ipairs(obj:GetDescendants()) do
-			safeTween(child,
-				TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ TextTransparency = 1, ImageTransparency = 1 }
-			)
+			if child:IsA("TextLabel") or child:IsA("TextButton") then
+				safeTween(child,
+					TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ TextTransparency = 1 }
+				)
+			elseif child:IsA("ImageLabel") or child:IsA("ImageButton") then
+				safeTween(child,
+					TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ ImageTransparency = 1 }
+				)
+			end
 		end
 		task.delay(0.42, function()
 			if not isEpochCurrent(epoch) then

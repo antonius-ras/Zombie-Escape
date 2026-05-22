@@ -45,9 +45,12 @@ local function writePresence(userId: number)
 	localPresenceByUserId[userId] = payload
 	cachePresenceRead(userId, payload)
 
-	pcall(function()
+	local ok, err = pcall(function()
 		presenceMap:SetAsync(getPresenceKey(userId), payload, PRESENCE_TTL_SECONDS)
 	end)
+	if not ok then
+		warn(string.format("[PresenceService] Failed to write presence for %d: %s", userId, tostring(err)))
+	end
 end
 
 local function removePresence(userId: number)

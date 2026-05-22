@@ -149,6 +149,9 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?)):
 			return updatedParty
 		end, PARTY_TTL_SECONDS)
 	end)
+	if not success then
+		warn(string.format("[PartyInviteService] updateParty failed for %s: %s", partyId, tostring(err)))
+	end
 	return success, updatedValue
 end
 
