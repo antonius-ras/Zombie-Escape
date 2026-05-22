@@ -4,7 +4,14 @@ local commonServer = (ServerScriptService :: any).common
 local function requireModule(moduleScript: ModuleScript, moduleName: string)
 	local ok, result = pcall(require, moduleScript)
 	if not ok then
-		error(string.format("[lobby/init.server] require failed for %s (%s): %s", moduleName, moduleScript:GetFullName(), tostring(result)))
+		error(
+			string.format(
+				"[lobby/init.server] require failed for %s (%s): %s",
+				moduleName,
+				moduleScript:GetFullName(),
+				tostring(result)
+			)
+		)
 	end
 
 	return result
@@ -23,10 +30,8 @@ local DataManager = requireModule(commonServer.DataManager, "DataManager")
 local ServerListFetcher = requireModule(commonServer.ServerListFetcher, "ServerListFetcher")
 local PresenceService = requireModule(commonServer.PresenceService, "PresenceService")
 local PartyInviteService = requireModule(commonServer.PartyInviteService, "PartyInviteService")
-local QueueTeleportService = requireModule(script:WaitForChild("QueueTeleportService"), "QueueTeleportService")
 
 initModule(PresenceService, "PresenceService", "lobby")
 initModule(DataManager, "DataManager")
 initModule(ServerListFetcher, "ServerListFetcher")
 initModule(PartyInviteService, "PartyInviteService")
-initModule(QueueTeleportService, "QueueTeleportService")
