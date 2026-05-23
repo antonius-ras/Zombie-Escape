@@ -105,9 +105,12 @@ local function setUserPartyId(userId: number, partyId: string)
 		expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
 		value = partyId,
 	}
-	pcall(function()
+	local success, err = pcall(function()
 		userPartyMap:SetAsync(tostring(userId), partyId, PARTY_TTL_SECONDS)
 	end)
+	if not success then
+		warn(string.format("[PartyInviteService] Failed to set party ID for user %d: %s", userId, tostring(err)))
+	end
 end
 
 local function clearUserPartyId(userId: number)
@@ -115,9 +118,12 @@ local function clearUserPartyId(userId: number)
 		expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
 		value = nil,
 	}
-	pcall(function()
+	local success, err = pcall(function()
 		userPartyMap:RemoveAsync(tostring(userId))
 	end)
+	if not success then
+		warn(string.format("[PartyInviteService] Failed to clear party ID for user %d: %s", userId, tostring(err)))
+	end
 end
 
 local function getPartyById(partyId: string): {[string]: any}?
@@ -142,9 +148,12 @@ end
 
 local function saveParty(party: {[string]: any})
 	party.updatedAt = os.time()
-	pcall(function()
+	local success, err = pcall(function()
 		partyMap:SetAsync(party.partyId, party, PARTY_TTL_SECONDS)
 	end)
+	if not success then
+		warn(string.format("[PartyInviteService] Failed to save party %s: %s", party.partyId, tostring(err)))
+	end
 end
 
 -- เพิ่มฟังก์ชัน UpdateParty สำหรับแก้ปัญหา Race Condition ด้วย UpdateAsync
