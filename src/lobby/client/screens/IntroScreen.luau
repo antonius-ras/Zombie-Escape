@@ -24,15 +24,40 @@ local _activeTweens: {[Instance]: Tween} = {}
 local _transitionEpoch = 0
 local _pulseEpoch = 0
 local _isInteractive = false
-
 local BG_TRANSPARENCY = 0.8
+local LOADING_MESSAGES = {
+	LOADING_UI = "LOADING UI...",
+	LOADING_ASSETS = "LOADING ASSETS...",
+	LOADING_ICONS = "LOADING ICONS...",
+	LOADING_SOUNDS = "LOADING SOUNDS...",
+	ALMOST_DONE = "ALMOST DONE...",
+}
 
 -- ============================================================
 -- Utils (private)
 -- ============================================================
 
-local UIAnimationUtils = require(script.Parent.Parent.utils.UIAnimationUtils)
-local safeTween = UIAnimationUtils.safeTween
+local function safeTween(obj, info, goals)
+	local g = {}
+	for k, v in pairs(goals) do
+		if pcall(function() return obj[k] end) then g[k] = v end
+	end
+	if next(g) then
+		local prev = _activeTweens[obj]
+		if prev then
+			prev:Cancel()
+		end
+		local t = TweenService:Create(obj, info, g)
+		_activeTweens[obj] = t
+		t.Completed:Connect(function()
+			if _activeTweens[obj] == t then
+				_activeTweens[obj] = nil
+			end
+		end)
+		t:Play()
+		return t
+	end
+end
 
 local function nextEpoch(): number
 	_transitionEpoch += 1
@@ -141,13 +166,13 @@ local function runRealLoading(epoch: number)
 	local isFinished = false
 
 	local function getText(p: number)
-		if p < 0.25 then return "LOADING UI..."
-		elseif p < 0.50 then return "LOADING ASSETS..."
-		elseif p < 0.75 then return "LOADING ICONS..."
-		elseif p < 0.95 then return "LOADING SOUNDS..."
-		else return "ALMOST DONE..."
+		if p < 0.25 then return LOADING_MESSAGES.LOADING_UI
+		elseif p < 0.50 then return LOADING_MESSAGES.LOADING_ASSETS
+		elseif p < 0.75 then return LOADING_MESSAGES.LOADING_ICONS
+		elseif p < 0.95 then return LOADING_MESSAGES.LOADING_SOUNDS
+		else return LOADING_MESSAGES.ALMOST_DONE
+			end
 		end
-	end
 
 	-- ระบบ Failsafe: บังคับจบการโหลดถ้าผ่านไป 10 วินาที (กันค้าง)
 	task.delay(10, function()

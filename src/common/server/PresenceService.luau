@@ -15,6 +15,19 @@ local presenceMap = MemoryStoreService:GetHashMap(PRESENCE_MAP_NAME)
 local localPresenceByUserId: {[number]: {[string]: any}} = {}
 local presenceReadCacheByUserId: {[number]: { found: boolean, value: any, expiresAt: number }} = {}
 
+task.spawn(function()
+	while true do
+		task.wait(60)
+		if not initialized then continue end
+		local now = os.clock()
+		for userId, cacheData in pairs(presenceReadCacheByUserId) do
+			if now >= cacheData.expiresAt then
+				presenceReadCacheByUserId[userId] = nil
+			end
+		end
+	end
+end)
+
 local playerAddedConn: RBXScriptConnection?
 local playerRemovingConn: RBXScriptConnection?
 
@@ -71,21 +84,11 @@ end
 
 local function heartbeatLoop()
 	while running do
-		-- Heartbeat processing
 		for _, player in ipairs(Players:GetPlayers()) do
 			if not running then break end
 			writePresence(player.UserId)
 			task.wait(0.1) -- Throttle to avoid MemoryStore limits
 		end
-		
-		-- Cache cleanup
-		local now = os.clock()
-		for userId, cacheData in pairs(presenceReadCacheByUserId) do
-			if now >= cacheData.expiresAt then
-				presenceReadCacheByUserId[userId] = nil
-			end
-		end
-		
 		task.wait(HEARTBEAT_INTERVAL_SECONDS)
 	end
 end
@@ -143,22 +146,15 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 		local runningThread = coroutine.running()
 		local MAX_CONCURRENT_REQUESTS = 15
 		local completedCount = 0
-		local currentIndex = 0
+		local currentIndex = 1
 		local totalToFetch = #idsToFetch
-		local resumed = false
-
-		local function resume()
-			if resumed then return end
-			resumed = true
-			task.spawn(runningThread)
-		end
 
 		local function fetchNext()
-			currentIndex += 1
 			local index = currentIndex
+			currentIndex += 1
 			if index > totalToFetch then 
 				if completedCount >= totalToFetch then
-					resume()
+					task.spawn(runningThread)
 				end
 				return 
 			end
@@ -176,7 +172,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 
 				completedCount += 1
 				if completedCount >= totalToFetch then
-					resume()
+					task.spawn(runningThread)
 				else
 					fetchNext()
 				end
