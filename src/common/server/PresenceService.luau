@@ -92,11 +92,19 @@ end
 
 local function heartbeatLoop()
 	while running do
+		local players = Players:GetPlayers()
+		local playerCount = #players
+		
+		-- คำนวณ throttle time ให้เหมาะสมกับจำนวนผู้เล่น
+		-- พยายามให้ลูปทั้งลูปใช้เวลาไม่เกิน 70% ของ PRESENCE_TTL_SECONDS
+		local totalBudget = PRESENCE_TTL_SECONDS * 0.7
+		local throttle = math.max(0.05, totalBudget / math.max(playerCount, 1))
+
 		-- Heartbeat processing
-		for _, player in ipairs(Players:GetPlayers()) do
+		for _, player in ipairs(players) do
 			if not running then break end
 			writePresence(player.UserId)
-			task.wait(0.1) -- Throttle to avoid MemoryStore limits
+			task.wait(throttle)
 		end
 		
 		-- Cache cleanup

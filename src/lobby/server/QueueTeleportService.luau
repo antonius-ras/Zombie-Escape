@@ -127,25 +127,50 @@ local function startPartyQueue(player: Player)
 			firePartyStatus(memberUserIds, "party_queue_failed", LocalizationKeys["errors.not_in_party"])
 			return
 		end
-		
-		-- Cross-Server Teleport Logic
-		local ok, accessCode = pcall(function()
-			return TeleportService:ReserveServer(QueueConfig.GameplayPlaceId)
-		end)
-		
-		if not ok then
-			warn("[QueueTeleportService] Failed to reserve server:", accessCode)
-			firePartyStatus(currentParty.memberUserIds, "party_queue_failed", LocalizationKeys["errors.teleport_failed"])
-			return
+
+		-- แยกสมาชิกในปาร์ตี้เป็น Local (ในเซิร์ฟเวอร์เดียวกัน) และ Remote (เซิร์ฟเวอร์อื่น)
+		local localPlayers = {}
+		local remoteUserIds = {}
+
+		for _, userId in ipairs(currentParty.memberUserIds) do
+			local p = Players:GetPlayerByUserId(userId)
+			if p then
+				table.insert(localPlayers, p)
+			else
+				table.insert(remoteUserIds, userId)
+			end
 		end
-		
-		pcall(function()
-			MessagingService:PublishAsync("PartyTeleportEvent", {
-				memberUserIds = currentParty.memberUserIds,
-				accessCode = accessCode,
-				placeId = QueueConfig.GameplayPlaceId
-			})
-		end)
+
+		-- Teleport Local Players ทันที
+		if #localPlayers > 0 then
+			local ok, accessCode = pcall(function()
+				return TeleportService:ReserveServer(QueueConfig.GameplayPlaceId)
+			end)
+
+			if ok then
+				local teleportOptions = Instance.new("TeleportOptions")
+				teleportOptions.ReservedServerAccessCode = accessCode
+				TeleportService:TeleportAsync(QueueConfig.GameplayPlaceId, localPlayers, teleportOptions)
+
+				-- ส่ง AccessCode ไปให้ Remote Players เพื่อให้เขาวาร์ปตามมา
+				if #remoteUserIds > 0 then
+					local pubSuccess, pubError = pcall(function()
+						MessagingService:PublishAsync("PartyTeleportEvent", {
+							memberUserIds = remoteUserIds,
+							accessCode = accessCode,
+							placeId = QueueConfig.GameplayPlaceId
+						})
+					end)
+					if not pubSuccess then
+						warn("[QueueTeleportService] Failed to publish teleport event:", pubError)
+						firePartyStatus(currentParty.memberUserIds, "party_queue_failed", LocalizationKeys["errors.teleport_failed"])
+					end
+				end
+			else
+				warn("[QueueTeleportService] Failed to reserve server:", accessCode)
+				firePartyStatus(currentParty.memberUserIds, "party_queue_failed", LocalizationKeys["errors.teleport_failed"])
+			end
+		end
 	end)
 end
 
