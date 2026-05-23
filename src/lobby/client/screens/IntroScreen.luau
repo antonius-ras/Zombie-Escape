@@ -23,7 +23,6 @@ local LocalizationKeys = require((ReplicatedStorage :: any).common.modules:WaitF
 
 local _onPlayPressed: () -> () -- callback ส่งมาจาก UIManager
 local _basePositions: {[GuiObject]: UDim2} = {}
-local _activeTweens: {[Instance]: Tween} = {}
 local _transitionEpoch = 0
 local _pulseEpoch = 0
 local _isInteractive = false

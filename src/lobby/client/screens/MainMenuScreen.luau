@@ -24,7 +24,6 @@ local _onMusicPressed: () -> ()
 local _onPlayPressed:  () -> ()
 
 local _basePositions: {[GuiObject]: UDim2} = {}
-local _activeTweens: {[Instance]: Tween} = {}
 local _transitionEpoch = 0
 local _isInteractive = false
 local _isQueueMode = false

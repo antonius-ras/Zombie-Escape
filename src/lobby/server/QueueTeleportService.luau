@@ -57,20 +57,6 @@ local function firePartyStatus(memberUserIds: {number}, status: string, value: a
 	end
 end
 
-local function getPartyPlayers(memberUserIds: {number}): ({Player}, number)
-	local players = {}
-	local missingCount = 0
-	for _, userId in ipairs(memberUserIds) do
-		local member = Players:GetPlayerByUserId(userId)
-		if member then
-			table.insert(players, member)
-		else
-			missingCount += 1
-		end
-	end
-	return players, missingCount
-end
-
 local function startPartyQueue(player: Player)
 	local partyData = PartyInviteService.GetPartyDataForUser(player.UserId)
 	if not partyData then

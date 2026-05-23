@@ -7,7 +7,7 @@ local _activeTweens = setmetatable({}, { __mode = "k" })
 -- ตารางอ้างอิง Property ที่อนุญาตให้ทำ Tween ได้ตาม ClassName
 local PROPERTY_WHITELIST = {
 	GuiObject = {
-		Position = true, Size = true, Rotation = true, Visible = true,
+		Position = true, Size = true, Rotation = true,
 		BackgroundTransparency = true, BackgroundColor3 = true,
 	},
 	TextLabel = {
