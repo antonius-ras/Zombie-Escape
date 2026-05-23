@@ -7,7 +7,8 @@ local PRESENCE_MAP_NAME = "GlobalPresenceV1"
 local USER_PARTY_MAP_NAME = "GlobalUserPartyMapV1"
 local PRESENCE_TTL_SECONDS = 40
 local HEARTBEAT_INTERVAL_SECONDS = 6
-local PRESENCE_READ_CACHE_TTL_SECONDS = 15 -- Cache duration increased to reduce quota usage
+local PRESENCE_READ_CACHE_TTL_SECONDS = 15
+local MAX_CONCURRENT_REQUESTS = 15
 
 local initialized = false
 local running = false
@@ -171,7 +172,6 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 	-- Parallel fetch with strict concurrency limits to prevent quota exhaustion
 	if #idsToFetch > 0 then
 		local runningThread = coroutine.running()
-		local MAX_CONCURRENT_REQUESTS = 15
 		local completedCount = 0
 		local currentIndex = 0
 		local totalToFetch = #idsToFetch

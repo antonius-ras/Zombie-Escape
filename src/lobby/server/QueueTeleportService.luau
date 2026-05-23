@@ -12,6 +12,7 @@ local PartyInviteService = require((ServerScriptService :: any).common:WaitForCh
 
 local REQUEST_REMOTE_NAME = "QueueTeleportRequest"
 local STATUS_REMOTE_NAME = "QueueTeleportStatus"
+local PARTY_TELEPORT_TOPIC = "PartyTeleportEvent"
 local REQUEST_COOLDOWN_SECONDS = 1.5
 
 local initialized = false
@@ -170,7 +171,7 @@ local function startPartyQueue(player: Player)
 				-- ส่ง AccessCode ไปให้ Remote Players เพื่อให้เขาวาร์ปตามมา
 				if #remoteUserIds > 0 then
 					local pubSuccess, pubError = pcall(function()
-						MessagingService:PublishAsync("PartyTeleportEvent", {
+						MessagingService:PublishAsync(PARTY_TELEPORT_TOPIC, {
 							memberUserIds = remoteUserIds,
 							accessCode = accessCode,
 							placeId = QueueConfig.GameplayPlaceId
@@ -287,7 +288,7 @@ function QueueTeleportService.Init()
 	end)
 
 	pcall(function()
-		teleportSubscription = MessagingService:SubscribeAsync("PartyTeleportEvent", handlePartyTeleportEvent)
+		teleportSubscription = MessagingService:SubscribeAsync(PARTY_TELEPORT_TOPIC, handlePartyTeleportEvent)
 	end)
 end
 

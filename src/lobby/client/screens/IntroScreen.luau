@@ -115,7 +115,7 @@ local function bounceOut(obj: GuiObject, delayTime: number?, epoch: number?, cal
 				)
 			end
 		end
-		task.delay(0.42, function()
+		task.Completed( function()
             if not isEpochCurrent(epoch) then
                 return
             end
@@ -171,7 +171,9 @@ local function runRealLoading(epoch: number)
 			end)
 		end)
 		finished = true
-		finishedEvent:Fire()
+		if isEpochCurrent(epoch) then
+    		finishedEvent:Fire()
+		end
 	end)
 
 	-- แทนที่จะ Polling ด้วย Wait นานๆ ให้รอ Event หรือ Timeout
@@ -207,7 +209,7 @@ local function showPlayButton(epoch: number)
 	_playButton.Visible = true
 	bounceIn(_playButton, 0, epoch)
 	
-	task.delay(0.6, function()
+	task.Completed(function()
 		if not isEpochCurrent(epoch) then return end
 		_isInteractive = true
 		_playButton.Active = true
