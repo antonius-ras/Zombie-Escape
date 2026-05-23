@@ -6,7 +6,7 @@ local MemoryStoreService = game:GetService("MemoryStoreService")
 local PRESENCE_MAP_NAME = "GlobalPresenceV1"
 local USER_PARTY_MAP_NAME = "GlobalUserPartyMapV1"
 local PRESENCE_TTL_SECONDS = 40
-local HEARTBEAT_INTERVAL_SECONDS = 10
+local HEARTBEAT_INTERVAL_SECONDS = 6
 local PRESENCE_READ_CACHE_TTL_SECONDS = 15 -- Cache duration increased to reduce quota usage
 
 local initialized = false
@@ -16,15 +16,16 @@ local presenceMap = MemoryStoreService:GetHashMap(PRESENCE_MAP_NAME)
 local userPartyMap = MemoryStoreService:GetHashMap(USER_PARTY_MAP_NAME)
 local localPresenceByUserId: {[number]: {[string]: any}} = {}
 local presenceReadCacheByUserId: {[number]: { found: boolean, value: any, expiresAt: number }} = {}
+local pendingPresenceFetches: {[string]: {thread}} = {}
 local partyIdCache: {[number]: { expiresAt: number, partyId: string? }} = {}
 local PARTY_CACHE_TTL = 30 -- Cache party ID locally for 30 seconds
 local playerAddedConn: RBXScriptConnection?
 local playerRemovingConn: RBXScriptConnection?
 
 local function getPresenceKey(userId: number): string
-
 	return tostring(userId)
 end
+
 
 local function buildPresencePayload(userId: number): {[string]: any}
 	-- ใช้ Local Cache แทนการเรียก GetAsync ทุกครั้ง
@@ -77,6 +78,7 @@ end
 local function removePresence(userId: number)
 	localPresenceByUserId[userId] = nil
 	presenceReadCacheByUserId[userId] = nil
+	partyIdCache[userId] = nil
 	pcall(function()
 		presenceMap:RemoveAsync(getPresenceKey(userId))
 	end)
@@ -96,8 +98,8 @@ local function heartbeatLoop()
 		local playerCount = #players
 		
 		-- คำนวณ throttle time ให้เหมาะสมกับจำนวนผู้เล่น
-		-- พยายามให้ลูปทั้งลูปใช้เวลาไม่เกิน 70% ของ PRESENCE_TTL_SECONDS
-		local totalBudget = PRESENCE_TTL_SECONDS * 0.7
+		-- พยายามให้ลูปทั้งลูปใช้เวลาไม่เกิน 50% ของ PRESENCE_TTL_SECONDS
+		local totalBudget = PRESENCE_TTL_SECONDS * 0.5
 		local throttle = math.max(0.05, totalBudget / math.max(playerCount, 1))
 
 		-- Heartbeat processing
@@ -190,23 +192,48 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 			end
 
 			local userId = idsToFetch[index]
-			task.spawn(function()
-				local ok, presence = pcall(function()
-					return presenceMap:GetAsync(getPresenceKey(userId))
-				end)
+			local presenceKey = getPresenceKey(userId)
 
-				if ok then
-					cachePresenceRead(userId, presence)
-					if presence then result[userId] = presence end
-				end
-
+			-- 1. ตรวจสอบว่ากำลังยิงดึงข้อมูลนี้อยู่หรือไม่
+			if pendingPresenceFetches[presenceKey] then
+				table.insert(pendingPresenceFetches[presenceKey], coroutine.running())
+				coroutine.yield() -- รอให้ตัวแรกดึงเสร็จ
+				
+				-- พอตื่นขึ้นมา ให้ลองดึงข้อมูลจาก Cache
+				local cached = presenceReadCacheByUserId[userId]
+				if cached and cached.found then result[userId] = cached.value end
+				
 				completedCount += 1
-				if completedCount >= totalToFetch then
-					resume()
-				else
-					fetchNext()
-				end
-			end)
+				if completedCount >= totalToFetch then resume() else fetchNext() end
+			else
+				-- 2. ถ้าเป็นคนแรกที่ยิงดึง
+				pendingPresenceFetches[presenceKey] = {}
+				
+				task.spawn(function()
+					local ok, presence = pcall(function()
+						return presenceMap:GetAsync(presenceKey)
+					end)
+
+					if ok then
+						cachePresenceRead(userId, presence)
+						if presence then result[userId] = presence end
+					end
+
+					-- 3. ปลุกทุกคนที่รอคิว
+					local waitingThreads = pendingPresenceFetches[presenceKey]
+					pendingPresenceFetches[presenceKey] = nil
+					for _, thread in ipairs(waitingThreads) do
+						task.spawn(thread)
+					end
+
+					completedCount += 1
+					if completedCount >= totalToFetch then
+						resume()
+					else
+						fetchNext()
+					end
+				end)
+			end
 		end
 
 		for i = 1, math.min(MAX_CONCURRENT_REQUESTS, totalToFetch) do
@@ -235,6 +262,7 @@ function PresenceService.Destroy()
 	initialized = false
 	table.clear(localPresenceByUserId)
 	table.clear(presenceReadCacheByUserId)
+	table.clear(partyIdCache)
 end
 
 return PresenceService
