@@ -38,7 +38,8 @@ local MainMenuGui = playerGui:WaitForChild("MainMenuGui")
 local PlayMenuGui = playerGui:WaitForChild("PlayMenuGui")
 
 -- ── IntroCamera ───────────────────────────────────────────────
-local IntroCamera = workspace:WaitForChild("IntroCamera")
+local Lobby = workspace:WaitForChild("Lobby")
+local IntroCamera = Lobby:WaitForChild("IntroCamera")
 
 -- ── ตั้งกล้อง IntroCamera ทันที ──────────────────────────────
 camera.CameraType = Enum.CameraType.Scriptable

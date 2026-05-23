@@ -282,7 +282,10 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 	while true do
 		pageCount += 1
 		for _, friend in ipairs(pages:GetCurrentPage()) do
-			table.insert(friendIds, friend.Id)
+            if not friend.IsOnline then
+                continue
+            end
+            table.insert(friendIds, friend.Id)
 			-- ถ้าไม่มี DisplayName มาให้ (หรือเป็นค่าว่าง) ให้จดไว้ไปดึงแบบ Batch
 			if not friend.DisplayName or friend.DisplayName == "" then
 				table.insert(idsToResolve, friend.Id)
@@ -574,9 +577,9 @@ local function handleSendInvite(player: Player, payload: {[string]: any})
 
 	local party, err = getOrCreatePartyForLeader(player.UserId)
 	
-	if err == "not_leader" then
-		return { ok = false, message = "only_leader_can_invite" }
-	end
+	if err then
+        return { ok = false, message = if err == "not_leader" then "only_leader_can_invite" else err }
+    end
 	setPartyMemberName(party, player.UserId, player.DisplayName)
 	if #party.memberUserIds >= MAX_PARTY_SIZE then
 		return { ok = false, message = "party_full" }
