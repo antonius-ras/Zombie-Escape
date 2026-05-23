@@ -103,29 +103,33 @@ local function getUserPartyId(userId: number): (string?, boolean)
 end
 
 local function setUserPartyId(userId: number, partyId: string)
-	userPartyIdCacheByUserId[userId] = {
-		expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
-		value = partyId,
-	}
-	PresenceService.UpdatePartyId(userId, partyId)
 	local success, err = pcall(function()
 		userPartyMap:SetAsync(tostring(userId), partyId, USER_MAPPING_TTL_SECONDS)
 	end)
-	if not success then
+	
+	if success then
+		userPartyIdCacheByUserId[userId] = {
+			expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
+			value = partyId,
+		}
+		PresenceService.UpdatePartyId(userId, partyId)
+	else
 		warn(string.format("[PartyInviteService] Failed to set party ID for user %d: %s", userId, tostring(err)))
 	end
 end
 
 local function clearUserPartyId(userId: number)
-	userPartyIdCacheByUserId[userId] = {
-		expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
-		value = nil,
-	}
-	PresenceService.UpdatePartyId(userId, nil)
 	local success, err = pcall(function()
 		userPartyMap:RemoveAsync(tostring(userId))
 	end)
-	if not success then
+	
+	if success then
+		userPartyIdCacheByUserId[userId] = {
+			expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
+			value = nil,
+		}
+		PresenceService.UpdatePartyId(userId, nil)
+	else
 		warn(string.format("[PartyInviteService] Failed to clear party ID for user %d: %s", userId, tostring(err)))
 	end
 end
@@ -171,7 +175,6 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?, s
 	local errorMessage
 	local success, err = pcall(function()
 		updatedValue = partyMap:UpdateAsync(partyId, function(oldParty)
-			if not oldParty then return nil end
 			local updatedParty, msg = transformFunction(oldParty)
 			errorMessage = msg
 			
@@ -185,7 +188,7 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?, s
 	
 	if not success then
 		warn(string.format("[PartyInviteService] updateParty failed for %s: %s", partyId, tostring(err)))
-		return false, nil, errorMessage
+		return false, nil, tostring(err)
 	end
 	
 	return true, updatedValue, errorMessage
@@ -646,30 +649,31 @@ local function handleRespondInvite(player: Player, payload: {[string]: any})
 		return { ok = false, message = LocalizationKeys.Party.InviteExpired }
 	end
 
-	if not accept then
-		removeInvite(inviteId)
-		publishEvent({
-			kind = "invite_declined",
-			toUserId = invite.fromUserId,
-			fromUserId = player.UserId,
-			fromName = player.DisplayName,
-		})
-		return { ok = true }
-	end
-
-	if getUserPartyId(player.UserId) then
-		removeInvite(inviteId)
-		return { ok = false, message = LocalizationKeys.Party.AlreadyInParty }
+	if accept then
+		local existingPartyId = getUserPartyId(player.UserId)
+		if existingPartyId then
+			local existingParty, fetchOk = getPartyById(existingPartyId)
+			if existingParty then
+				removeInvite(inviteId)
+				return { ok = false, message = LocalizationKeys.Party.AlreadyInParty }
+			elseif fetchOk then
+				-- Ghost party: Mapping exists but party data is gone. Clear it and proceed.
+				clearUserPartyId(player.UserId)
+			else
+				-- API error: Preserve state and don't allow joining a new party yet.
+				return { ok = false, message = LocalizationKeys.Party.ApiError }
+			end
+		end
 	end
 
 
 	local success, updatedPartySnapshot, err = updateParty(invite.partyId, function(party)
 		if not party then
-			return nil, "party_not_found"
+			return nil, LocalizationKeys.Party.PartyNotFound
 		end
 
 		if #party.memberUserIds >= MAX_PARTY_SIZE then
-			return party, "party_full"
+			return party, LocalizationKeys.Party.PartyFull
 		end
 
 		if not containsUser(party.memberUserIds, player.UserId) then
@@ -686,7 +690,7 @@ local function handleRespondInvite(player: Player, payload: {[string]: any})
 	removeInvite(inviteId)
 
 	if not success or err or not updatedPartySnapshot then
-		return { ok = false, message = err or "update_failed" }
+		return { ok = false, message = err or LocalizationKeys.Party.UpdateFailed }
 	end
 
 	setUserPartyId(player.UserId, updatedPartySnapshot.partyId)
