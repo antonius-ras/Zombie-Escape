@@ -149,9 +149,19 @@ local function runRealLoading(epoch: number)
 	end
 
 	local assetsToLoad = {}
-	for _, v in ipairs(_gui:GetDescendants()) do
-		if v:IsA("ImageLabel") or v:IsA("ImageButton") or v:IsA("Sound") or v:IsA("MeshPart") or v:IsA("SpecialMesh") or v:IsA("Decal") or v:IsA("Texture") then
-			table.insert(assetsToLoad, v)
+	local containers = { _gui }
+	
+	-- เพิ่ม Workspace.Lobby สำหรับ Preload 3D Assets (Code Review Fix)
+	local lobbyFolder = workspace:FindFirstChild("Lobby")
+	if lobbyFolder then
+		table.insert(containers, lobbyFolder)
+	end
+	
+	for _, container in ipairs(containers) do
+		for _, v in ipairs(container:GetDescendants()) do
+			if v:IsA("ImageLabel") or v:IsA("ImageButton") or v:IsA("Sound") or v:IsA("MeshPart") or v:IsA("SpecialMesh") or v:IsA("Decal") or v:IsA("Texture") then
+				table.insert(assetsToLoad, v)
+			end
 		end
 	end
 
