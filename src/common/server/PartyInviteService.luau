@@ -14,6 +14,7 @@ local INVITE_MAP_NAME = "GlobalPartyInviteMapV1"
 local PARTY_TOPIC_NAME = "GlobalPartyEventsV1"
 
 local PARTY_TTL_SECONDS = 60 * 60
+local USER_MAPPING_TTL_SECONDS = 24 * 60 * 60 -- เพิ่มตัวแปรนี้สำหรับ userPartyMap (24 ชั่วโมง)
 local INVITE_TTL_SECONDS = 30
 local MAX_PARTY_SIZE = 4
 local FRIEND_LIST_CACHE_TTL_SECONDS = 15
@@ -107,7 +108,7 @@ local function setUserPartyId(userId: number, partyId: string)
 	}
 	PresenceService.UpdatePartyId(userId, partyId)
 	local success, err = pcall(function()
-		userPartyMap:SetAsync(tostring(userId), partyId, PARTY_TTL_SECONDS)
+		userPartyMap:SetAsync(tostring(userId), partyId, USER_MAPPING_TTL_SECONDS)
 	end)
 	if not success then
 		warn(string.format("[PartyInviteService] Failed to set party ID for user %d: %s", userId, tostring(err)))
