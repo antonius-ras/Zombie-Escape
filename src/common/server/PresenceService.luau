@@ -130,6 +130,8 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 
 	-- Parallel fetch with strict concurrency limits to prevent quota exhaustion
 	if #idsToFetch > 0 then
+		local Signal = require(game:GetService("ReplicatedStorage").Packages.Signal)
+		local completedSignal = Signal.new()
 		local MAX_CONCURRENT_REQUESTS = 15
 		local completedCount = 0
 		local currentIndex = 1
@@ -138,21 +140,30 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 		local function fetchNext()
 			local index = currentIndex
 			currentIndex += 1
-			if index > totalToFetch then return end
+			if index > totalToFetch then 
+				if completedCount >= totalToFetch then
+					completedSignal:Fire()
+				end
+				return 
+			end
 
 			local userId = idsToFetch[index]
 			task.spawn(function()
 				local ok, presence = pcall(function()
 					return presenceMap:GetAsync(getPresenceKey(userId))
 				end)
-				
+
 				if ok then
 					cachePresenceRead(userId, presence)
 					if presence then result[userId] = presence end
 				end
-				
+
 				completedCount += 1
-				fetchNext()
+				if completedCount >= totalToFetch then
+					completedSignal:Fire()
+				else
+					fetchNext()
+				end
 			end)
 		end
 
@@ -160,12 +171,9 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 			fetchNext()
 		end
 
-		local startTime = os.clock()
-		while completedCount < totalToFetch and (os.clock() - startTime) < 5 do
-			task.wait()
-		end
+		completedSignal:Wait()
+		completedSignal:Destroy()
 	end
-
 	return result
 end
 

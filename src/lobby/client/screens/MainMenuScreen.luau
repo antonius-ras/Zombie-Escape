@@ -28,32 +28,16 @@ local _isQueueMode = false
 local _onQueueCancelPressed: (() -> ())?
 local _defaultPlayText = "PLAY!"
 local BG_TRANSPARENCY = 0.8
+-- ประกาศค่าคงที่ไว้ด้านบนสุดของไฟล์
+local OFF_SCREEN_OFFSET_X = 1.5
+
 
 -- ============================================================
 -- Utils (private)
 -- ============================================================
 
-local function safeTween(obj, info, goals)
-	local g = {}
-	for k, v in pairs(goals) do
-		if pcall(function() return obj[k] end) then g[k] = v end
-	end
-	if next(g) then
-		local prev = _activeTweens[obj]
-		if prev then
-			prev:Cancel()
-		end
-		local t = TweenService:Create(obj, info, g)
-		_activeTweens[obj] = t
-		t.Completed:Connect(function()
-			if _activeTweens[obj] == t then
-				_activeTweens[obj] = nil
-			end
-		end)
-		t:Play()
-		return t
-	end
-end
+local UIAnimationUtils = require(script.Parent.Parent.utils.UIAnimationUtils)
+local safeTween = UIAnimationUtils.safeTween
 
 local function nextEpoch(): number
 	_transitionEpoch += 1
@@ -81,7 +65,7 @@ local function bounceIn(obj: GuiObject, delayTime: number?, epoch: number?)
 	
 	-- คำนวณจุดเริ่มต้นให้อยู่นอกจอ (ถ้าอยู่ครึ่งซ้ายให้มาจากซ้าย ถ้าอยู่ครึ่งขวาให้มาจากขวา)
 	local isLeft = targetPos.X.Scale < 0.5
-	local startXOffset = isLeft and -1.5 or 1.5
+	local startXOffset = isLeft and -OFF_SCREEN_OFFSET_X or OFF_SCREEN_OFFSET_X
 	local startPos = UDim2.new(targetPos.X.Scale + startXOffset, targetPos.X.Offset, targetPos.Y.Scale, targetPos.Y.Offset)
 	
 	obj.Position    = startPos
@@ -123,7 +107,7 @@ local function bounceOut(obj: GuiObject, delayTime: number?, epoch: number?, cal
 	
 	-- คำนวณจุดที่จะเลื่อนออกไป (ออกทางเดิมที่เข้ามา)
 	local isLeft = basePos.X.Scale < 0.5
-	local endXOffset = isLeft and -1.5 or 1.5
+	local endXOffset = isLeft and -OFF_SCREEN_OFFSET_X or OFF_SCREEN_OFFSET_X
 	local targetPos = UDim2.new(basePos.X.Scale + endXOffset, basePos.X.Offset, basePos.Y.Scale, basePos.Y.Offset)
 	
 	task.delay(delayTime or 0, function()

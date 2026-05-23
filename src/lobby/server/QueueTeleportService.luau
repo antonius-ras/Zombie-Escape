@@ -6,6 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
 
 local QueueConfig = require((ReplicatedStorage :: any).shared:WaitForChild("QueueConfig"))
+local LocalizationKeys = require((ReplicatedStorage :: any).common.modules:WaitForChild("LocalizationKeys"))
 local PartyInviteService = require((ServerScriptService :: any).common:WaitForChild("PartyInviteService"))
 
 local REQUEST_REMOTE_NAME = "QueueTeleportRequest"
@@ -69,18 +70,18 @@ end
 local function startPartyQueue(player: Player)
 	local partyData = PartyInviteService.GetPartyDataForUser(player.UserId)
 	if not partyData then
-		sendTeleportFailed(player, "Not in party")
+		sendTeleportFailed(player, LocalizationKeys["errors.not_in_party"])
 		return
 	end
 
 	if partyData.leaderUserId ~= player.UserId then
-		sendTeleportFailed(player, "Only leader can start matchmaking")
+		sendTeleportFailed(player, LocalizationKeys["errors.only_leader_can_start"])
 		return
 	end
 
 	local memberUserIds = partyData.memberUserIds
 	if #memberUserIds == 0 then
-		sendTeleportFailed(player, "Party is empty")
+		sendTeleportFailed(player, LocalizationKeys["errors.party_empty"])
 		return
 	end
 
@@ -123,7 +124,7 @@ local function startPartyQueue(player: Player)
 
 		local partyPlayers, missingCount = getPartyPlayers(playersToTeleportIds)
 		if #partyPlayers == 0 or missingCount > 0 then
-			firePartyStatus(playersToTeleportIds, "party_queue_failed", "Some party members are not ready")
+			firePartyStatus(playersToTeleportIds, "party_queue_failed", LocalizationKeys["errors.some_members_not_ready"])
 			return
 		end
 
@@ -134,7 +135,7 @@ local function startPartyQueue(player: Player)
 		
 		if not ok then
 			warn("[QueueTeleportService] Party teleport failed", err)
-			firePartyStatus(playersToTeleportIds, "party_queue_failed", "Party teleport failed")
+			firePartyStatus(playersToTeleportIds, "party_queue_failed", LocalizationKeys["errors.party_teleport_failed"])
 		end
 	end)
 end
@@ -178,7 +179,7 @@ local function onQueueTeleportRequest(player: Player, mode: string)
 	end
 
 	if PartyInviteService.GetPartyDataForUser(player.UserId) then
-		sendTeleportFailed(player, "Leave the party before starting solo")
+		sendTeleportFailed(player, LocalizationKeys["errors.leave_party_before_solo"])
 		return
 	end
 
@@ -188,7 +189,7 @@ local function onQueueTeleportRequest(player: Player, mode: string)
 
 	if not success then
 		warn("[QueueTeleportService] Solo teleport failed for", player.Name, err)
-		sendTeleportFailed(player, "Teleport failed")
+		sendTeleportFailed(player, LocalizationKeys["errors.teleport_failed"])
 	end
 end
 
