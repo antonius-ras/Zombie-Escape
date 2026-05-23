@@ -16,9 +16,8 @@ local localPresenceByUserId: {[number]: {[string]: any}} = {}
 local presenceReadCacheByUserId: {[number]: { found: boolean, value: any, expiresAt: number }} = {}
 
 task.spawn(function()
-	while true do
+	while running do
 		task.wait(60)
-		if not initialized then continue end
 		local now = os.clock()
 		for userId, cacheData in pairs(presenceReadCacheByUserId) do
 			if now >= cacheData.expiresAt then

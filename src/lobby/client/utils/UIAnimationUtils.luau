@@ -4,18 +4,6 @@ local UIAnimationUtils = {}
 
 local _activeTweens: {[Instance]: Tween} = {}
 
--- รายการ Property พื้นฐานที่มักใช้ทำ Tween
-local VALID_PROPERTIES = {
-	Position = true,
-	Size = true,
-	Transparency = true,
-	ImageTransparency = true,
-	TextTransparency = true,
-	BackgroundTransparency = true,
-	Rotation = true,
-	Visible = true,
-}
-
 function UIAnimationUtils.safeTween(obj: Instance, info: TweenInfo, goals: {[string]: any}): Tween?
 	local g = {}
 	

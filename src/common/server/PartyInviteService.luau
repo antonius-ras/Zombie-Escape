@@ -455,6 +455,44 @@ local function handleGetOnlineFriends(player: Player)
 
 	local presenceByUserId = PresenceService.GetPresenceByUserIds(friendIds)
 	local result = {}
+	
+	-- Batch fetch party IDs in parallel
+	local partyIdsByUserId = {}
+	local runningThread = coroutine.running()
+	local MAX_CONCURRENT_REQUESTS = 15
+	local completedCount = 0
+	local totalToFetch = #friendIds
+	local resumed = false
+
+	local function resume()
+		if resumed then return end
+		resumed = true
+		task.spawn(runningThread)
+	end
+
+	local function fetchPartyId(userId)
+		local ok, partyId = pcall(function()
+			return userPartyMap:GetAsync(tostring(userId))
+		end)
+		if ok then
+			partyIdsByUserId[userId] = partyId
+		end
+		
+		completedCount += 1
+		if completedCount >= totalToFetch then
+			resume()
+		end
+	end
+
+	for i = 1, math.min(MAX_CONCURRENT_REQUESTS, totalToFetch) do
+		task.spawn(function()
+			for j = i, totalToFetch, MAX_CONCURRENT_REQUESTS do
+				fetchPartyId(friendIds[j])
+			end
+		end)
+	end
+	
+	if totalToFetch > 0 then coroutine.yield() end
 
 	for _, friend in ipairs(friends) do
 		local presence = presenceByUserId[friend.userId]
@@ -462,7 +500,7 @@ local function handleGetOnlineFriends(player: Player)
 			continue
 		end
 
-		local friendPartyId = getUserPartyId(friend.userId)
+		local friendPartyId = partyIdsByUserId[friend.userId]
 		local isInParty = type(friendPartyId) == "string" and friendPartyId ~= ""
 
 		local status = "OFFLINE"
@@ -478,6 +516,7 @@ local function handleGetOnlineFriends(player: Player)
 			else
 				status = "LOBBY_OTHER"
 			end
+
 			canInvite = true
 		end
 
