@@ -544,16 +544,19 @@ local function handleGetParty(player: Player)
 	end
 
 	local party, fetchOk = getPartyById(partyId)
-	if not party then
-		if fetchOk then
+	if party then
+		if not containsUser(party.memberUserIds, player.UserId) then
 			clearUserPartyId(player.UserId)
 			return { ok = true, data = nil }
-		else
-			return { ok = false, message = "api_error" }
 		end
+		return { ok = true, data = buildPartySnapshot(party) }
 	end
-
-	return { ok = true, data = buildPartySnapshot(party) }
+	if fetchOk then
+		clearUserPartyId(player.UserId)
+		return { ok = true, data = nil }
+	else
+		return { ok = false, message = "api_error" }
+	end
 end
 
 local function handleSendInvite(player: Player, payload: {[string]: any})
