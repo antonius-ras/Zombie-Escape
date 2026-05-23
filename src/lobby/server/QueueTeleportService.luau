@@ -15,6 +15,7 @@ local REQUEST_COOLDOWN_SECONDS = 1.5
 
 local initialized = false
 local requestConnection: RBXScriptConnection?
+local playerRemovingConn: RBXScriptConnection?
 local requestEvent: RemoteEvent?
 local statusEvent: RemoteEvent?
 local lastRequestAtByUserId: {[number]: number} = {}
@@ -211,9 +212,7 @@ function QueueTeleportService.Init()
 	statusEvent = getOrCreateRemote(remotesFolder, STATUS_REMOTE_NAME)
 
 	requestConnection = requestEvent.OnServerEvent:Connect(onQueueTeleportRequest)
-	
-	-- Clean up request cache to prevent memory leaks (Code Review Fix)
-	Players.PlayerRemoving:Connect(function(player)
+	playerRemovingConn = Players.PlayerRemoving:Connect(function(player)
 		lastRequestAtByUserId[player.UserId] = nil
 	end)
 end
@@ -222,6 +221,10 @@ function QueueTeleportService.Destroy()
 	if requestConnection then
 		requestConnection:Disconnect()
 		requestConnection = nil
+	end
+	if playerRemovingConn then
+		playerRemovingConn:Disconnect()
+		playerRemovingConn = nil
 	end
 
 	requestEvent = nil

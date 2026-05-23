@@ -19,20 +19,14 @@ local VALID_PROPERTIES = {
 function UIAnimationUtils.safeTween(obj: Instance, info: TweenInfo, goals: {[string]: any}): Tween?
 	local g = {}
 	
-	-- ตรวจสอบอย่างรวดเร็วว่าเป็น GuiObject หรือไม่
-	if obj:IsA("GuiObject") then
-		for k, v in pairs(goals) do
-			-- ตรวจสอบแค่ชื่อ Property ที่อนุญาต
-			if VALID_PROPERTIES[k] then
-				g[k] = v
-			end
-		end
-	else
-		-- กรณีเป็น Instance อื่น ให้ใช้การตรวจสอบที่ยืดหยุ่นกว่า
-		for k, v in pairs(goals) do
-			if (obj :: any)[k] ~= nil then
-				g[k] = v
-			end
+	for k, v in pairs(goals) do
+		-- ตรวจสอบว่า Property นี้มีอยู่ใน Object หรือไม่โดยไม่ทำให้เกิด Error
+		local success = pcall(function()
+			local _ = (obj :: any)[k]
+		end)
+		
+		if success then
+			g[k] = v
 		end
 	end
 	

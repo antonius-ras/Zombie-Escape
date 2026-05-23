@@ -146,15 +146,22 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 		local runningThread = coroutine.running()
 		local MAX_CONCURRENT_REQUESTS = 15
 		local completedCount = 0
-		local currentIndex = 1
+		local currentIndex = 0
 		local totalToFetch = #idsToFetch
+		local resumed = false
+
+		local function resume()
+			if resumed then return end
+			resumed = true
+			task.spawn(runningThread)
+		end
 
 		local function fetchNext()
-			local index = currentIndex
 			currentIndex += 1
+			local index = currentIndex
 			if index > totalToFetch then 
 				if completedCount >= totalToFetch then
-					task.spawn(runningThread)
+					resume()
 				end
 				return 
 			end
@@ -172,7 +179,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 
 				completedCount += 1
 				if completedCount >= totalToFetch then
-					task.spawn(runningThread)
+					resume()
 				else
 					fetchNext()
 				end
