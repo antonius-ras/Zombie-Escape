@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
+local MessagingService = game:GetService("MessagingService")
 
 local QueueConfig = require((ReplicatedStorage :: any).shared:WaitForChild("QueueConfig"))
 local LocalizationKeys = require((ReplicatedStorage :: any).common.modules:WaitForChild("LocalizationKeys"))
@@ -127,25 +128,44 @@ local function startPartyQueue(player: Player)
 			firePartyStatus(memberUserIds, "party_queue_failed", LocalizationKeys["errors.not_in_party"])
 			return
 		end
-		local playersToTeleportIds = currentParty.memberUserIds
-
-		local partyPlayers, missingCount = getPartyPlayers(playersToTeleportIds)
-		if #partyPlayers == 0 or missingCount > 0 then
-			firePartyStatus(playersToTeleportIds, "party_queue_failed", LocalizationKeys["errors.some_members_not_ready"])
-			return
-		end
-
-		local ok, err = pcall(function()
-			local teleportOptions = Instance.new("TeleportOptions")
-			TeleportService:TeleportAsync(QueueConfig.GameplayPlaceId, partyPlayers, teleportOptions)
+		
+		-- Cross-Server Teleport Logic
+		local ok, accessCode = pcall(function()
+			return TeleportService:ReserveServer(QueueConfig.GameplayPlaceId)
 		end)
 		
 		if not ok then
-			warn("[QueueTeleportService] Party teleport failed", err)
-			firePartyStatus(playersToTeleportIds, "party_queue_failed", LocalizationKeys["errors.party_teleport_failed"])
+			warn("[QueueTeleportService] Failed to reserve server:", accessCode)
+			firePartyStatus(currentParty.memberUserIds, "party_queue_failed", LocalizationKeys["errors.teleport_failed"])
+			return
 		end
+		
+		pcall(function()
+			MessagingService:PublishAsync("PartyTeleportEvent", {
+				memberUserIds = currentParty.memberUserIds,
+				accessCode = accessCode,
+				placeId = QueueConfig.GameplayPlaceId
+			})
+		end)
 	end)
 end
+
+-- รับคำสั่งวาร์ปข้ามเซิร์ฟเวอร์
+pcall(function()
+	MessagingService:SubscribeAsync("PartyTeleportEvent", function(message)
+		local data = message.Data
+		if type(data) ~= "table" then return end
+		
+		for _, userId in ipairs(data.memberUserIds) do
+			local player = Players:GetPlayerByUserId(userId)
+			if player then
+				local teleportOptions = Instance.new("TeleportOptions")
+				teleportOptions.ReservedServerAccessCode = data.accessCode
+				TeleportService:TeleportAsync(data.placeId, { player }, teleportOptions)
+			end
+		end
+	end)
+end)
 
 local function cancelPartyQueue(player: Player)
 	local partyData = PartyInviteService.GetPartyDataForUser(player.UserId)

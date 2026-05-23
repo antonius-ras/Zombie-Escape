@@ -138,14 +138,16 @@ end
 
 -- เพิ่มฟังก์ชัน UpdateParty สำหรับแก้ปัญหา Race Condition ด้วย UpdateAsync
 local function updateParty(partyId: string, transformFunction: (any) -> (any?, boolean)): (boolean, any?)
+	local deleteSignal = false
 	local updatedValue
 	local success, err = pcall(function()
 		updatedValue = partyMap:UpdateAsync(partyId, function(oldParty)
 			if not oldParty then return nil end
-			local updatedParty, deleteSignal = transformFunction(oldParty)
+			local updatedParty, del = transformFunction(oldParty)
+			deleteSignal = del
 			
-			if deleteSignal then
-				return nil -- ลบ Key ใน MemoryStore แบบ Atomic
+			if del then
+				return nil -- Abandon update to signal deletion
 			end
 			
 			if updatedParty then
@@ -158,9 +160,15 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?, b
 	
 	if not success then
 		warn(string.format("[PartyInviteService] updateParty failed for %s: %s", partyId, tostring(err)))
+		return false, nil
+	end
+
+	if deleteSignal then
+		pcall(function() partyMap:RemoveAsync(partyId) end)
+		return true, nil
 	end
 	
-	return success, updatedValue
+	return true, updatedValue
 end
 
 local function ensureMemberNames(party: {[string]: any}): {[string]: string}

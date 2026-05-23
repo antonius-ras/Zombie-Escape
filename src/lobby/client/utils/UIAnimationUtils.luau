@@ -2,7 +2,7 @@ local TweenService = game:GetService("TweenService")
 
 local UIAnimationUtils = {}
 
-local _activeTweens: {[Instance]: Tween} = {}
+local _activeTweens = setmetatable({}, { __mode = "k" })
 
 -- ตารางอ้างอิง Property ที่อนุญาตให้ทำ Tween ได้ตาม ClassName
 local PROPERTY_WHITELIST = {
