@@ -143,7 +143,18 @@ local function runRealLoading(epoch: number)
 	local total  = math.max(#assetsToLoad, 1)
 	local loaded = 0
 	local lastUiUpdate = 0
+
+	-- 1. อัปเดตสถานะ epoch และดึง Thread ปัจจุบันไว้
+	local currentThread = coroutine.running()
 	local isFinished = false
+
+	-- 2. สร้างระบบ Timeout ป้องกันโหลดค้าง (เช่น ถ้าเกิน 10 วินาทีให้ข้ามไปเลย)
+	local timeoutThread = task.delay(10, function()
+		if not isFinished and isEpochCurrent(epoch) then
+			isFinished = true
+			task.spawn(currentThread) -- ปลุก Thread หลักให้ทำงานต่อเมื่อหมดเวลา
+		end
+	end)
 
 	local function getText(p: number)
 		if p < 0.25 then return LOADING_MESSAGES.LOADING_UI
@@ -151,15 +162,11 @@ local function runRealLoading(epoch: number)
 		elseif p < 0.75 then return LOADING_MESSAGES.LOADING_ICONS
 		elseif p < 0.95 then return LOADING_MESSAGES.LOADING_SOUNDS
 		else return LOADING_MESSAGES.ALMOST_DONE
-			end
 		end
+	end
 
-	-- ระบบ Failsafe: บังคับจบการโหลดถ้าผ่านไป 10 วินาที (กันค้าง)
-	task.delay(10, function()
-		isFinished = true
-	end)
-
-	task.spawn(function()
+	-- 3. เรียกใช้ PreloadAsync บน Thread หลัก
+	pcall(function()
 		ContentProvider:PreloadAsync(assetsToLoad, function(_id, _status)
 			if not isEpochCurrent(epoch) or isFinished then return end
 			loaded += 1
@@ -170,13 +177,15 @@ local function runRealLoading(epoch: number)
 			_loadingFill.Size = UDim2.new(progress, 0, _fillSizeY.Scale, _fillSizeY.Offset)
 			_loadingText.Text = getText(progress)
 		end)
-		isFinished = true
 	end)
 
-	while not isFinished and isEpochCurrent(epoch) do
-		task.wait(0.1)
+	-- 4. เมื่อโหลดเสร็จสิ้น (หรือหมดเวลา) ให้เคลียร์สถานะและปิดตัว Timeout ทิ้ง
+	if not isFinished then
+		isFinished = true
+		task.cancel(timeoutThread) -- ยกเลิกตัวนับเวลาถอยหลังเพราะโหลดเสร็จก่อน
 	end
 
+	-- 5. ตรวจสอบ Epoch อีกครั้งก่อนไปต่อ
 	if not isEpochCurrent(epoch) then return end
 
 	safeTween(_loadingFill,

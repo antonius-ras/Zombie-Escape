@@ -4,16 +4,46 @@ local UIAnimationUtils = {}
 
 local _activeTweens: {[Instance]: Tween} = {}
 
+-- ตารางอ้างอิง Property ที่อนุญาตให้ทำ Tween ได้ตาม ClassName
+local PROPERTY_WHITELIST = {
+	GuiObject = {
+		Position = true, Size = true, Rotation = true, Visible = true,
+		BackgroundTransparency = true, BackgroundColor3 = true,
+	},
+	TextLabel = {
+		TextTransparency = true, TextColor3 = true,
+	},
+	TextButton = {
+		TextTransparency = true, TextColor3 = true,
+	},
+	ImageLabel = {
+		ImageTransparency = true, ImageColor3 = true,
+	},
+	ImageButton = {
+		ImageTransparency = true, ImageColor3 = true,
+	},
+	CanvasGroup = {
+		GroupTransparency = true,
+	}
+}
+
+-- ฟังก์ชันตรวจสอบว่า Object นี้รองรับ Property หรือไม่
+local function isPropertyValid(obj: Instance, propName: string): boolean
+	-- ตรวจสอบจาก Whitelist พื้นฐานก่อน
+	for className, props in pairs(PROPERTY_WHITELIST) do
+		if obj:IsA(className) and props[propName] then
+			return true
+		end
+	end
+	return false
+end
+
 function UIAnimationUtils.safeTween(obj: Instance, info: TweenInfo, goals: {[string]: any}): Tween?
 	local g = {}
 	
 	for k, v in pairs(goals) do
-		-- ตรวจสอบว่า Property นี้มีอยู่ใน Object หรือไม่โดยไม่ทำให้เกิด Error
-		local success = pcall(function()
-			local _ = (obj :: any)[k]
-		end)
-		
-		if success then
+		-- ตรวจสอบ Property ว่ารองรับหรือไม่
+		if isPropertyValid(obj, k) then
 			g[k] = v
 		end
 	end

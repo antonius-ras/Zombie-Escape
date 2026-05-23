@@ -514,13 +514,8 @@ local function handleGetOnlineFriends(player: Player)
 	end
 
 	-- 3. สั่งหยุดรอ (Yield) ทีเดียวตรงนี้ รอให้งานทุกอย่างเสร็จครบพร้อมกัน
-	if totalExpected > 1 then
-		if not resumed then
-			coroutine.yield()
-		end
-	elseif totalExpected == 1 then
-		-- กรณีมีแค่ presence แต่อาจไม่มีเพื่อน
-		if not resumed then resume() end
+	if not resumed then
+		coroutine.yield()
 	end
 
 	local result = {}
