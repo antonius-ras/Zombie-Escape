@@ -113,26 +113,30 @@ local function bounceOut(obj: GuiObject, delayTime: number?, epoch: number?, cal
 			return
 		end
 		-- เลื่อนออกแบบพุ่งตัว (Exponential In)
-		local t = safeTween(obj,
-			TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.In),
-			{ Position = targetPos, BackgroundTransparency = 1 }
-		)
-		for _, child in ipairs(obj:GetDescendants()) do
-			safeTween(child,
-				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ TextTransparency = 1, ImageTransparency = 1 }
-			)
-		end
-		task.delay(0.65, function()
-            if not isEpochCurrent(epoch) then
-                return
-            end
-            obj.Position = basePos
-            obj.Visible = false
-            if callback then
-                callback()
-            end
-        end)
+		local t = safeTween(obj, TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.In),
+            { Position = targetPos, BackgroundTransparency = 1 }
+        )
+        for _, child in ipairs(obj:GetDescendants()) do
+            safeTween(child,
+                TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                { TextTransparency = 1, ImageTransparency = 1 }
+            )
+        end
+
+        if t then
+            t.Completed:Connect(function()
+                if not isEpochCurrent(epoch) then
+                    return
+                end
+                obj.Position = basePos
+                obj.Visible = false
+                if callback then
+                    callback()
+                end
+            end)
+        elseif callback then
+            callback()
+        end
 	end)
 end
 
