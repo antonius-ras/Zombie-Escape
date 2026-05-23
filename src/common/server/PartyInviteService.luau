@@ -471,10 +471,8 @@ local function handleGetOnlineFriends(player: Player)
 	end
 
 	local function fetchPartyId(userId)
-		local ok, partyId = pcall(function()
-			return userPartyMap:GetAsync(tostring(userId))
-		end)
-		if ok then
+		local partyId = getUserPartyId(userId)
+		if partyId then
 			partyIdsByUserId[userId] = partyId
 		end
 		

@@ -121,7 +121,11 @@ local function startPartyQueue(player: Player)
 
 		-- Get the latest party member list immediately before teleporting (Code Review Fix)
 		local currentParty = PartyInviteService.GetPartyDataForUser(player.UserId)
-		local playersToTeleportIds = if currentParty then currentParty.memberUserIds else { player.UserId }
+		if not currentParty or currentParty.partyId ~= partyData.partyId then
+			firePartyStatus(memberUserIds, "party_queue_failed", LocalizationKeys["errors.not_in_party"])
+			return
+		end
+		local playersToTeleportIds = currentParty.memberUserIds
 
 		local partyPlayers, missingCount = getPartyPlayers(playersToTeleportIds)
 		if #partyPlayers == 0 or missingCount > 0 then
