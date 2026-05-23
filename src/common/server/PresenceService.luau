@@ -16,6 +16,8 @@ local presenceMap = MemoryStoreService:GetHashMap(PRESENCE_MAP_NAME)
 local userPartyMap = MemoryStoreService:GetHashMap(USER_PARTY_MAP_NAME)
 local localPresenceByUserId: {[number]: {[string]: any}} = {}
 local presenceReadCacheByUserId: {[number]: { found: boolean, value: any, expiresAt: number }} = {}
+local partyIdCache: {[number]: { expiresAt: number, partyId: string? }} = {}
+local PARTY_CACHE_TTL = 30 -- Cache party ID locally for 30 seconds
 local playerAddedConn: RBXScriptConnection?
 local playerRemovingConn: RBXScriptConnection?
 
@@ -25,12 +27,21 @@ local function getPresenceKey(userId: number): string
 end
 
 local function buildPresencePayload(userId: number): {[string]: any}
-	-- เพิ่มการดึง partyId ของผู้ใช้มาใส่ใน payload เพื่อให้ลดการเรียก MemoryStore ซ้ำซ้อน
+	-- ใช้ Local Cache แทนการเรียก GetAsync ทุกครั้ง
+	local cachedParty = partyIdCache[userId]
 	local partyId = nil
-	local ok, val = pcall(function()
-		return userPartyMap:GetAsync(tostring(userId))
-	end)
-	if ok then partyId = val end
+	
+	if cachedParty and cachedParty.expiresAt > os.clock() then
+		partyId = cachedParty.partyId
+	else
+		local ok, val = pcall(function()
+			return userPartyMap:GetAsync(tostring(userId))
+		end)
+		if ok then 
+			partyId = val 
+			partyIdCache[userId] = { expiresAt = os.clock() + PARTY_CACHE_TTL, partyId = partyId }
+		end
+	end
 
 	return {
 		userId = userId,

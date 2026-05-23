@@ -132,6 +132,15 @@ end
 -- ============================================================
 
 local function runRealLoading(epoch: number)
+	local function getText(p: number)
+		if p < 0.25 then return LOADING_MESSAGES.LOADING_UI
+		elseif p < 0.50 then return LOADING_MESSAGES.LOADING_ASSETS
+		elseif p < 0.75 then return LOADING_MESSAGES.LOADING_ICONS
+		elseif p < 0.95 then return LOADING_MESSAGES.LOADING_SOUNDS
+		else return LOADING_MESSAGES.ALMOST_DONE
+		end
+	end
+
 	local assetsToLoad = {}
 	for _, v in ipairs(_gui:GetDescendants()) do
 		if v:IsA("ImageLabel") or v:IsA("ImageButton") or v:IsA("Sound") then
@@ -143,32 +152,14 @@ local function runRealLoading(epoch: number)
 	local loaded = 0
 	local lastUiUpdate = 0
 	
-	-- 1. Use a BindableEvent to safely wait for completion or timeout
-	local finishedEvent = Instance.new("BindableEvent")
-	local isFinished = false
-
-	-- 2. Create a timeout that signals the event
-	local timeoutThread = task.delay(10, function()
-		if not isFinished and isEpochCurrent(epoch) then
-			isFinished = true
-			finishedEvent:Fire()
-		end
-	end)
-
-	local function getText(p: number)
-		if p < 0.25 then return LOADING_MESSAGES.LOADING_UI
-		elseif p < 0.50 then return LOADING_MESSAGES.LOADING_ASSETS
-		elseif p < 0.75 then return LOADING_MESSAGES.LOADING_ICONS
-		elseif p < 0.95 then return LOADING_MESSAGES.LOADING_SOUNDS
-		else return LOADING_MESSAGES.ALMOST_DONE
-		end
-	end
-
-	-- 3. Run PreloadAsync in a separate thread
+	local finished = false
+	
+	-- เรียกใช้ PreloadAsync โดยตรงโดยไม่ต้อง yield Thread หลักจนค้าง
+	-- แต่ใช้การตรวจสอบสถานะแบบไม่บล็อก
 	task.spawn(function()
 		pcall(function()
 			ContentProvider:PreloadAsync(assetsToLoad, function(_id, _status)
-				if not isEpochCurrent(epoch) or isFinished then return end
+				if not isEpochCurrent(epoch) or finished then return end
 				loaded += 1
 				local now = os.clock()
 				if now - lastUiUpdate < 1 / 30 and loaded < total then return end
@@ -178,17 +169,16 @@ local function runRealLoading(epoch: number)
 				_loadingText.Text = getText(progress)
 			end)
 		end)
-		
-		if not isFinished then
-			isFinished = true
-			task.cancel(timeoutThread)
-			finishedEvent:Fire()
-		end
+		finished = true
 	end)
 
-	-- 4. Wait for the first signal (completion or timeout)
-	finishedEvent.Event:Wait()
-	finishedEvent:Destroy()
+	-- แทนที่จะ Yield ถาวร ให้รอสถานะเสร็จสิ้นแบบไม่ค้าง (ใช้ loop สั้นๆ พร้อม timeout)
+	local startTime = os.clock()
+	while not finished and os.clock() - startTime < 10 and isEpochCurrent(epoch) do
+		task.wait(0.5)
+	end
+	
+	finished = true -- Force complete
 
 	if not isEpochCurrent(epoch) then return end
 

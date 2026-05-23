@@ -148,12 +148,14 @@ local function saveParty(party: {[string]: any})
 end
 
 -- เพิ่มฟังก์ชัน UpdateParty สำหรับแก้ปัญหา Race Condition ด้วย UpdateAsync
-local function updateParty(partyId: string, transformFunction: (any) -> any?): (boolean, any?)
+local function updateParty(partyId: string, transformFunction: (any) -> (any?, string?)): (boolean, any?, string?)
 	local updatedValue
+	local errorMessage
 	local success, err = pcall(function()
 		updatedValue = partyMap:UpdateAsync(partyId, function(oldParty)
 			if not oldParty then return nil end
-			local updatedParty = transformFunction(oldParty)
+			local updatedParty, msg = transformFunction(oldParty)
+			errorMessage = msg
 			
 			if updatedParty then
 				updatedParty.updatedAt = os.time()
@@ -167,7 +169,7 @@ local function updateParty(partyId: string, transformFunction: (any) -> any?): (
 		warn(string.format("[PartyInviteService] updateParty failed for %s: %s", partyId, tostring(err)))
 	end
 	
-	return success, updatedValue
+	return success, updatedValue, errorMessage
 end
 
 local function ensureMemberNames(party: {[string]: any}): {[string]: string}
