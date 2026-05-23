@@ -184,7 +184,9 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 			fetchNext()
 		end
 
-		coroutine.yield()
+		if not resumed then
+			coroutine.yield()
+		end
 	end
 	return result
 end

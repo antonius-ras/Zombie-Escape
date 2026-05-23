@@ -139,15 +139,13 @@ end
 -- เพิ่มฟังก์ชัน UpdateParty สำหรับแก้ปัญหา Race Condition ด้วย UpdateAsync
 local function updateParty(partyId: string, transformFunction: (any) -> (any?, boolean)): (boolean, any?)
 	local updatedValue
-	local shouldDelete = false
 	local success, err = pcall(function()
 		updatedValue = partyMap:UpdateAsync(partyId, function(oldParty)
 			if not oldParty then return nil end
 			local updatedParty, deleteSignal = transformFunction(oldParty)
 			
 			if deleteSignal then
-				shouldDelete = true
-				return oldParty -- คืนค่าเดิมเพื่อจบ UpdateAsync โดยไม่เปลี่ยนแปลง
+				return nil -- ลบ Key ใน MemoryStore แบบ Atomic
 			end
 			
 			if updatedParty then
@@ -158,10 +156,7 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?, b
 		end, PARTY_TTL_SECONDS)
 	end)
 	
-	if success and shouldDelete then
-		pcall(function() partyMap:RemoveAsync(partyId) end)
-		updatedValue = nil
-	elseif not success then
+	if not success then
 		warn(string.format("[PartyInviteService] updateParty failed for %s: %s", partyId, tostring(err)))
 	end
 	
@@ -520,7 +515,9 @@ local function handleGetOnlineFriends(player: Player)
 
 	-- 3. สั่งหยุดรอ (Yield) ทีเดียวตรงนี้ รอให้งานทุกอย่างเสร็จครบพร้อมกัน
 	if totalExpected > 1 then
-		coroutine.yield()
+		if not resumed then
+			coroutine.yield()
+		end
 	elseif totalExpected == 1 then
 		-- กรณีมีแค่ presence แต่อาจไม่มีเพื่อน
 		if not resumed then resume() end
@@ -603,11 +600,11 @@ local function handleSendInvite(player: Player, payload: {[string]: any})
 	end
 
 	local party, err = getOrCreatePartyForLeader(player.UserId)
-	setPartyMemberName(party, player.UserId, player.DisplayName)
+	
 	if err == "not_leader" then
 		return { ok = false, message = "only_leader_can_invite" }
 	end
-
+	setPartyMemberName(party, player.UserId, player.DisplayName)
 	if #party.memberUserIds >= MAX_PARTY_SIZE then
 		return { ok = false, message = "party_full" }
 	end
