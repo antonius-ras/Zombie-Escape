@@ -143,7 +143,7 @@ local function runRealLoading(epoch: number)
 
 	local assetsToLoad = {}
 	for _, v in ipairs(_gui:GetDescendants()) do
-		if v:IsA("ImageLabel") or v:IsA("ImageButton") or v:IsA("Sound") then
+		if v:IsA("ImageLabel") or v:IsA("ImageButton") or v:IsA("Sound") or v:IsA("MeshPart") or v:IsA("SpecialMesh") or v:IsA("Decal") or v:IsA("Texture") then
 			table.insert(assetsToLoad, v)
 		end
 	end

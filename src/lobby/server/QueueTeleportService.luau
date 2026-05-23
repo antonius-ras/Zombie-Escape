@@ -123,6 +123,7 @@ local function startPartyQueue(player: Player)
 
 		-- ตรวจสอบว่าหัวหน้าปาร์ตี้ยังอยู่ในเซิร์ฟเวอร์หรือไม่ (Code Review Fix)
 		if not player:IsDescendantOf(Players) then
+			firePartyStatus(memberUserIds, "party_queue_failed", LocalizationKeys["errors.leader_left"])
 			return
 		end
 

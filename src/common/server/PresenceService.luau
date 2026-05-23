@@ -236,7 +236,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 		end
 
 		for i = 1, math.min(MAX_CONCURRENT_REQUESTS, totalToFetch) do
-			fetchNext()
+			task.spawn(fetchNext)
 		end
 
 		if not resumed then

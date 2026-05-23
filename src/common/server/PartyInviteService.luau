@@ -182,13 +182,6 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?, s
 		warn(string.format("[PartyInviteService] updateParty failed for %s: %s", partyId, tostring(err)))
 		return false, nil, errorMessage
 	end
-
-	-- Refresh TTL หลังจากอัปเดตสำเร็จ (เนื่องจาก UpdateAsync ของ HashMap ไม่รองรับ TTL)
-	if updatedValue then
-		pcall(function()
-			partyMap:SetAsync(partyId, updatedValue, PARTY_TTL_SECONDS)
-		end)
-	end
 	
 	return true, updatedValue, errorMessage
 end
