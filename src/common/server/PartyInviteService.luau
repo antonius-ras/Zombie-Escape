@@ -121,13 +121,23 @@ local function clearUserPartyId(userId: number)
 end
 
 local function getPartyById(partyId: string): {[string]: any}?
+	local cached = partyCacheByPartyId[partyId]
+	if cached and cached.expiresAt > os.clock() then
+		return cached.value
+	end
+
 	local ok, party = pcall(function()
 		return partyMap:GetAsync(partyId)
 	end)
-	if ok then
-		return party
-	end
-	return nil
+	
+	local partyValue = if ok then party else nil
+	
+	partyCacheByPartyId[partyId] = {
+		expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
+		value = partyValue,
+	}
+	
+	return partyValue
 end
 
 local function saveParty(party: {[string]: any})
@@ -454,75 +464,17 @@ local function handleGetOnlineFriends(player: Player)
 		return { ok = false, message = errorMessage or "friends_fetch_failed" }
 	end
 
-	local presenceByUserId
-	local partyIdsByUserId = {}
-	
-	local runningThread = coroutine.running()
-	local MAX_CONCURRENT_REQUESTS = 15
-	local totalToFetch = #friendIds
-	
-	-- ตัวนับสำหรับงานที่เสร็จแล้ว ( Presence + เพื่อนทั้งหมด )
-	local completedCount = 0
-	local totalExpected = 1 + totalToFetch
-	local resumed = false
-
-	local function resume()
-		if resumed then return end
-		resumed = true
-		task.spawn(runningThread)
-	end
-
-	-- 1. ดึงข้อมูล Presence แบบขนาน
-	task.spawn(function()
-		presenceByUserId = PresenceService.GetPresenceByUserIds(friendIds) or {}
-		completedCount += 1
-		if completedCount >= totalExpected then
-			resume()
-		end
-	end)
-
-	-- 2. ระบบดึงข้อมูลปาร์ตี้แบบกระจายงาน (Concurrency)
-	local function fetchPartyId(userId)
-		local partyId = getUserPartyId(userId)
-		if partyId then
-			partyIdsByUserId[userId] = partyId
-		end
-		
-		completedCount += 1
-		if completedCount >= totalExpected then
-			resume()
-		end
-	end
-
-	if totalToFetch > 0 then
-		for i = 1, math.min(MAX_CONCURRENT_REQUESTS, totalToFetch) do
-			task.spawn(function()
-				for j = i, totalToFetch, MAX_CONCURRENT_REQUESTS do
-					fetchPartyId(friendIds[j])
-				end
-			end)
-		end
-	else
-		-- ถ้าไม่มีเพื่อน ให้ถือว่างานดึงปาร์ตี้เสร็จสิ้น
-		completedCount += totalToFetch
-		if completedCount >= totalExpected then
-			resume()
-		end
-	end
-
-	-- 3. สั่งหยุดรอ (Yield) ทีเดียวตรงนี้ รอให้งานทุกอย่างเสร็จครบพร้อมกัน
-	if not resumed then
-		coroutine.yield()
-	end
-
+	local presenceByUserId = PresenceService.GetPresenceByUserIds(friendIds) or {}
 	local result = {}
+	
 	for _, friend in ipairs(friends) do
 		local presence = presenceByUserId[friend.userId]
 		if not presence then
 			continue
 		end
 
-		local friendPartyId = partyIdsByUserId[friend.userId]
+		-- ดึง partyId จาก payload ของ PresenceService ที่แก้ไว้ล่าสุด
+		local friendPartyId = presence.partyId
 		local isInParty = type(friendPartyId) == "string" and friendPartyId ~= ""
 
 		local status = "OFFLINE"

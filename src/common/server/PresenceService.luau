@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 local MemoryStoreService = game:GetService("MemoryStoreService")
 
 local PRESENCE_MAP_NAME = "GlobalPresenceV1"
+local USER_PARTY_MAP_NAME = "GlobalUserPartyMapV1"
 local PRESENCE_TTL_SECONDS = 40
 local HEARTBEAT_INTERVAL_SECONDS = 10
 local PRESENCE_READ_CACHE_TTL_SECONDS = 15 -- Cache duration increased to reduce quota usage
@@ -12,6 +13,7 @@ local initialized = false
 local running = false
 local placeType = "lobby"
 local presenceMap = MemoryStoreService:GetHashMap(PRESENCE_MAP_NAME)
+local userPartyMap = MemoryStoreService:GetHashMap(USER_PARTY_MAP_NAME)
 local localPresenceByUserId: {[number]: {[string]: any}} = {}
 local presenceReadCacheByUserId: {[number]: { found: boolean, value: any, expiresAt: number }} = {}
 local playerAddedConn: RBXScriptConnection?
@@ -23,11 +25,19 @@ local function getPresenceKey(userId: number): string
 end
 
 local function buildPresencePayload(userId: number): {[string]: any}
+	-- เพิ่มการดึง partyId ของผู้ใช้มาใส่ใน payload เพื่อให้ลดการเรียก MemoryStore ซ้ำซ้อน
+	local partyId = nil
+	local ok, val = pcall(function()
+		return userPartyMap:GetAsync(tostring(userId))
+	end)
+	if ok then partyId = val end
+
 	return {
 		userId = userId,
 		placeType = placeType,
 		placeId = game.PlaceId,
 		jobId = game.JobId,
+		partyId = partyId,
 		updatedAt = os.time(),
 	}
 end

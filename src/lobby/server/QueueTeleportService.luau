@@ -111,9 +111,7 @@ local function startPartyQueue(player: Player)
 			end
 
 			remaining -= 1
-			local currentParty = PartyInviteService.GetPartyDataForUser(player.UserId)
-			local currentMembers = if currentParty then currentParty.memberUserIds else memberUserIds
-			firePartyStatus(currentMembers, "party_queue_tick", remaining)
+			firePartyStatus(memberUserIds, "party_queue_tick", remaining)
 		end
 
 		if partyQueueStateByPartyId[partyData.partyId] ~= queueState or queueState.cancelled then
