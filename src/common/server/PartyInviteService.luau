@@ -82,10 +82,10 @@ local function removeUser(userIds: {number}, userId: number)
 	end
 end
 
-local function getUserPartyId(userId: number): string?
+local function getUserPartyId(userId: number): (string?, boolean)
 	local cached = userPartyIdCacheByUserId[userId]
 	if cached and cached.expiresAt > os.clock() then
-		return cached.value
+		return cached.value, true
 	end
 
 	local ok, partyId = pcall(function()
@@ -96,9 +96,9 @@ local function getUserPartyId(userId: number): string?
 			expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
 			value = partyId,
 		}
-		return partyId
+		return partyId, true
 	end
-	return nil
+	return nil, false
 end
 
 local function setUserPartyId(userId: number, partyId: string)
