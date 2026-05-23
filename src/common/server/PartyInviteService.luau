@@ -7,6 +7,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PresenceService = require(script.Parent:WaitForChild("PresenceService"))
+local LocalizationKeys = require((ReplicatedStorage :: any).common.modules:WaitForChild("LocalizationKeys"))
 
 local PARTY_MAP_NAME = "GlobalPartyMapV1"
 local USER_PARTY_MAP_NAME = "GlobalUserPartyMapV1"
@@ -556,42 +557,50 @@ local function handleSendInvite(player: Player, payload: {[string]: any})
 	local now = os.clock()
 	local lastInviteAt = lastInviteAtByUserId[player.UserId]
 	if lastInviteAt and now - lastInviteAt < 2 then
-		return { ok = false, message = "too_fast" }
+		return { ok = false, message = LocalizationKeys.Party.TooFast }
 	end
 	lastInviteAtByUserId[player.UserId] = now
 
 	local toUserId = tonumber(payload.toUserId)
 	if not toUserId then
-		return { ok = false, message = "invalid_target" }
+		return { ok = false, message = LocalizationKeys.Party.InvalidTarget }
 	end
 
 	if toUserId == player.UserId then
-		return { ok = false, message = "cannot_invite_self" }
+		return { ok = false, message = LocalizationKeys.Party.CannotInviteSelf }
 	end
 
 	local presenceByUserId = PresenceService.GetPresenceByUserIds({ toUserId })
 	local targetPresence = presenceByUserId[toUserId]
 	if not targetPresence or targetPresence.placeType ~= "lobby" then
-		return { ok = false, message = "target_not_in_lobby" }
+		return { ok = false, message = LocalizationKeys.Party.InvalidTargetLobby }
 	end
 
 	local party, err = getOrCreatePartyForLeader(player.UserId)
-	
 	if err then
-        return { ok = false, message = if err == "not_leader" then "only_leader_can_invite" else err }
-    end
+		local errorMessage = ""
+		if err == "not_leader" then
+			errorMessage = LocalizationKeys.Party.OnlyLeaderCanInvite
+		elseif err == "full" then
+			errorMessage = LocalizationKeys.Party.PartyFull
+		elseif err == "api_error" then
+			errorMessage = LocalizationKeys.Party.ApiError
+		end
+		
+		return { ok = false, message = errorMessage }
+	end
 	setPartyMemberName(party, player.UserId, player.DisplayName)
 	if #party.memberUserIds >= MAX_PARTY_SIZE then
-		return { ok = false, message = "party_full" }
+		return { ok = false, message = LocalizationKeys.Party.PartyFull }
 	end
 
 	if containsUser(party.memberUserIds, toUserId) then
-		return { ok = false, message = "already_in_party" }
+		return { ok = false, message = LocalizationKeys.Party.AlreadyInParty }
 	end
 
 	local targetPartyId = getUserPartyId(toUserId)
 	if targetPartyId then
-		return { ok = false, message = "target_already_in_party" }
+		return { ok = false, message = LocalizationKeys.Party.TargetAlreadyInParty }
 	end
 
 	local invite = {
@@ -609,7 +618,7 @@ local function handleSendInvite(player: Player, payload: {[string]: any})
 	end)
 
 	if not ok then
-		return { ok = false, message = "invite_save_failed" }
+		return { ok = false, message = LocalizationKeys.Party.InviteSaveFailed }
 	end
 
 	sendInviteToUser(invite)
@@ -619,22 +628,22 @@ end
 local function handleRespondInvite(player: Player, payload: {[string]: any})
 	local inviteId = tostring(payload.inviteId or "")
 	if inviteId == "" then
-		return { ok = false, message = "invalid_invite_id" }
+		return { ok = false, message = LocalizationKeys.Party.InvalidInviteId }
 	end
 
 	local accept = payload.accept == true
 	local invite = getInvite(inviteId)
 	if not invite then
-		return { ok = false, message = "invite_not_found" }
+		return { ok = false, message = LocalizationKeys.Party.InviteNotFound }
 	end
 
 	if invite.toUserId ~= player.UserId then
-		return { ok = false, message = "invite_not_for_player" }
+		return { ok = false, message = LocalizationKeys.Party.InviteNotForPlayer }
 	end
 
 	if os.time() > (invite.expiresAt or 0) then
 		removeInvite(inviteId)
-		return { ok = false, message = "invite_expired" }
+		return { ok = false, message = LocalizationKeys.Party.InviteExpired }
 	end
 
 	if not accept then
@@ -650,7 +659,7 @@ local function handleRespondInvite(player: Player, payload: {[string]: any})
 
 	if getUserPartyId(player.UserId) then
 		removeInvite(inviteId)
-		return { ok = false, message = "already_in_party" }
+		return { ok = false, message = LocalizationKeys.Party.AlreadyInParty }
 	end
 
 
@@ -689,7 +698,7 @@ end
 local function handleLeaveParty(player: Player)
 	local partyId = getUserPartyId(player.UserId)
 	if not partyId then
-		return { ok = false, message = "not_in_party" }
+		return { ok = false, message = LocalizationKeys.Party.NotInParty }
 	end
 
 	local wasDeleted = false
@@ -727,25 +736,25 @@ end
 local function handleKickMember(player: Player, payload: {[string]: any})
 	local targetUserId = tonumber(payload.targetUserId)
 	if not targetUserId or targetUserId == player.UserId then
-		return { ok = false, message = "invalid_target" }
+		return { ok = false, message = LocalizationKeys.Party.InvalidTarget }
 	end
 
 	local partyId = getUserPartyId(player.UserId)
-	if not partyId then return { ok = false, message = "not_in_party" } end
+	if not partyId then return { ok = false, message = LocalizationKeys.Party.NotInParty } end
 
 	local errorMessage = nil
 
 	local success, updatedPartySnapshot = updateParty(partyId, function(party)
 		if not party then
-			errorMessage = "party_not_found"
+			errorMessage = LocalizationKeys.Party.PartyNotFound
 			return nil
 		end
 		if party.leaderUserId ~= player.UserId then
-			errorMessage = "only_leader_can_kick"
+			errorMessage = LocalizationKeys.Party.OnlyLeaderCanKick
 			return party -- แก้ไข: คืนค่าเดิมเพื่อยกเลิก โดยไม่ลบปาร์ตี้ทิ้ง
 		end
 		if not containsUser(party.memberUserIds, targetUserId) then
-			errorMessage = "target_not_in_party"
+			errorMessage = LocalizationKeys.Party.TargetNotInParty
 			return party -- แก้ไข: คืนค่าเดิม
 		end
 
@@ -759,7 +768,7 @@ local function handleKickMember(player: Player, payload: {[string]: any})
 	end)
 
 	if not success or errorMessage or not updatedPartySnapshot then
-		return { ok = false, message = errorMessage or "update_failed" }
+		return { ok = false, message = errorMessage or LocalizationKeys.Party.UpdateFailed }
 	end
 
 	clearUserPartyId(targetUserId)
@@ -770,7 +779,7 @@ end
 
 local function handleDisbandParty(player: Player)
 	local partyId = getUserPartyId(player.UserId)
-	if not partyId then return { ok = false, message = "not_in_party" } end
+	if not partyId then return { ok = false, message = LocalizationKeys.Party.NotInParty } end
 
 	local membersToClear = {}
 	local success = updateParty(partyId, function(party)
@@ -781,7 +790,7 @@ local function handleDisbandParty(player: Player)
 		return nil -- คืนค่า nil เพื่อลบข้อมูลปาร์ตี้ออกจาก MemoryStore จริงๆ
 	end)
 
-	if not success then return { ok = false, message = "disband_failed" } end
+	if not success then return { ok = false, message = LocalizationKeys.Party.DisbandFailed } end
 
 	for _, userId in ipairs(membersToClear) do
 		clearUserPartyId(userId)

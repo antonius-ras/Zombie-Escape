@@ -14,4 +14,27 @@ return {
     ["ui.almost_done"] = "ALMOST DONE...",
     ["ui.ready"] = "READY!",
     ["ui.play"] = "PLAY!",
+
+    Party = {
+        OnlyLeaderCanInvite = "Only the party leader can invite players",
+        PartyFull = "Party is full",
+        ApiError = "Server communication error",
+        AlreadyInParty = "Already in a party",
+        TargetAlreadyInParty = "Target player is already in a party",
+        InviteSaveFailed = "Failed to send invite",
+        InvalidInviteId = "Invalid invite ID",
+        InviteNotFound = "Invite not found or expired",
+        InviteNotForPlayer = "This invite is not for you",
+        InviteExpired = "Invite has expired",
+        NotInParty = "You are not in a party",
+        InvalidTarget = "Invalid target player",
+        PartyNotFound = "Party not found",
+        OnlyLeaderCanKick = "Only the leader can kick members",
+        TargetNotInParty = "Target player is not in your party",
+        UpdateFailed = "Failed to update party",
+        DisbandFailed = "Failed to disband party",
+        TooFast = "Please wait before trying again",
+        InvalidTargetLobby = "Target player is not in the lobby",
+        CannotInviteSelf = "You cannot invite yourself",
+    }
 }
