@@ -15,6 +15,19 @@ local presenceMap = MemoryStoreService:GetHashMap(PRESENCE_MAP_NAME)
 local localPresenceByUserId: {[number]: {[string]: any}} = {}
 local presenceReadCacheByUserId: {[number]: { found: boolean, value: any, expiresAt: number }} = {}
 
+task.spawn(function()
+	while true do
+		task.wait(60) -- ตรวจสอบทุกๆ 60 วินาที
+		
+		local now = os.clock()
+		for userId, cacheData in pairs(presenceReadCacheByUserId) do
+			if now >= cacheData.expiresAt then
+				presenceReadCacheByUserId[userId] = nil
+			end
+		end
+	end
+end)
+
 local playerAddedConn: RBXScriptConnection?
 local playerRemovingConn: RBXScriptConnection?
 
@@ -130,8 +143,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 
 	-- Parallel fetch with strict concurrency limits to prevent quota exhaustion
 	if #idsToFetch > 0 then
-		local Signal = require(game:GetService("ReplicatedStorage").Packages.Signal)
-		local completedSignal = Signal.new()
+		local runningThread = coroutine.running()
 		local MAX_CONCURRENT_REQUESTS = 15
 		local completedCount = 0
 		local currentIndex = 1
@@ -142,7 +154,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 			currentIndex += 1
 			if index > totalToFetch then 
 				if completedCount >= totalToFetch then
-					completedSignal:Fire()
+					task.spawn(runningThread)
 				end
 				return 
 			end
@@ -160,7 +172,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 
 				completedCount += 1
 				if completedCount >= totalToFetch then
-					completedSignal:Fire()
+					task.spawn(runningThread)
 				else
 					fetchNext()
 				end
@@ -171,8 +183,7 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 			fetchNext()
 		end
 
-		completedSignal:Wait()
-		completedSignal:Destroy()
+		coroutine.yield()
 	end
 	return result
 end
