@@ -943,6 +943,12 @@ function PartyInviteService.Init()
 					userPartyIdCacheByUserId[userId] = nil
 				end
 			end
+
+			for partyId, data in pairs(partyCacheByPartyId) do
+				if data.expiresAt and data.expiresAt < now then
+					partyCacheByPartyId[partyId] = nil
+				end
+			end
 		end
 	end)
 end
@@ -967,7 +973,9 @@ function PartyInviteService.Destroy()
 	initialized = false
 	table.clear(friendListCacheByUserId)
 	table.clear(userPartyIdCacheByUserId)
-	table.clear(displayNameCache) -- ล้าง Cache เมื่อปิดระบบ
+	table.clear(displayNameCache)
+	table.clear(partyCacheByPartyId)
+	table.clear(lastInviteAtByUserId)
 end
 
 function PartyInviteService.GetPartyDataForUser(userId: number): {[string]: any}?

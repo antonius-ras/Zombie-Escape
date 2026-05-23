@@ -70,9 +70,7 @@ local function bounceIn(obj: GuiObject, delayTime: number?, epoch: number?)
 	
 	obj.Position    = startPos
 	obj.Visible     = true
-	if pcall(function() return obj.BackgroundTransparency end) then
-		obj.BackgroundTransparency = 1
-	end
+	obj.BackgroundTransparency = 1
 	
 	-- เริ่มต้นให้โปร่งใสทั้งหมด
 	for _, child in ipairs(obj:GetDescendants()) do
