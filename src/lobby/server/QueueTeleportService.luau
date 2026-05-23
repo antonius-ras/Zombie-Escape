@@ -17,12 +17,12 @@ local REQUEST_COOLDOWN_SECONDS = 1.5
 local initialized = false
 local requestConnection: RBXScriptConnection?
 local playerRemovingConn: RBXScriptConnection?
+local teleportSubscription: RBXScriptConnection?
 local requestEvent: RemoteEvent?
 local statusEvent: RemoteEvent?
 local lastRequestAtByUserId: {[number]: number} = {}
 local partyQueueStateByPartyId: {[string]: { token: number, cancelled: boolean }} = {}
 local nextPartyQueueToken = 0
-local playersToTeleport = {}
 
 local function getOrCreateRemote(remotesFolder: Instance, remoteName: string): RemoteEvent
 	local existing = remotesFolder:FindFirstChild(remoteName)
@@ -152,27 +152,26 @@ local function startPartyQueue(player: Player)
 end
 
 -- รับคำสั่งวาร์ปข้ามเซิร์ฟเวอร์
-pcall(function()
-	MessagingService:SubscribeAsync("PartyTeleportEvent", function(message)
-		local data = message.Data
-		if type(data) ~= "table" then return end
-		
-		for _, userId in ipairs(data.memberUserIds) do
-			local player = Players:GetPlayerByUserId(userId)
-			if player then
-				table.insert(playersToTeleport, player)
-			end
+local function handlePartyTeleportEvent(message)
+	local data = message.Data
+	if type(data) ~= "table" then return end
+	
+	local playersToTeleport = {} -- scope local ภายในฟังก์ชัน
+	for _, userId in ipairs(data.memberUserIds) do
+		local player = Players:GetPlayerByUserId(userId)
+		if player then
+			table.insert(playersToTeleport, player)
 		end
-		
-		if #playersToTeleport > 0 then
-			local teleportOptions = Instance.new("TeleportOptions")
-			teleportOptions.ReservedServerAccessCode = data.accessCode
-			pcall(function()
-				TeleportService:TeleportAsync(data.placeId, playersToTeleport, teleportOptions)
-			end)
-		end
-	end)
-end)
+	end
+	
+	if #playersToTeleport > 0 then
+		local teleportOptions = Instance.new("TeleportOptions")
+		teleportOptions.ReservedServerAccessCode = data.accessCode
+		pcall(function()
+			TeleportService:TeleportAsync(data.placeId, playersToTeleport, teleportOptions)
+		end)
+	end
+end
 
 local function cancelPartyQueue(player: Player)
 	local partyData = PartyInviteService.GetPartyDataForUser(player.UserId)
@@ -248,6 +247,10 @@ function QueueTeleportService.Init()
 	playerRemovingConn = Players.PlayerRemoving:Connect(function(player)
 		lastRequestAtByUserId[player.UserId] = nil
 	end)
+
+	pcall(function()
+		teleportSubscription = MessagingService:SubscribeAsync("PartyTeleportEvent", handlePartyTeleportEvent)
+	end)
 end
 
 function QueueTeleportService.Destroy()
@@ -258,6 +261,10 @@ function QueueTeleportService.Destroy()
 	if playerRemovingConn then
 		playerRemovingConn:Disconnect()
 		playerRemovingConn = nil
+	end
+	if teleportSubscription then
+		teleportSubscription:Disconnect()
+		teleportSubscription = nil
 	end
 
 	requestEvent = nil

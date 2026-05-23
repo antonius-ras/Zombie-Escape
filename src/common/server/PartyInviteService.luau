@@ -36,6 +36,7 @@ local partyEventRE: RemoteEvent?
 local displayNameCache: {[number]: { name: string, expiresAt: number }} = {}
 local friendListCacheByUserId: {[number]: { expiresAt: number, friends: {any}, friendIds: {number} }} = {}
 local userPartyIdCacheByUserId: {[number]: { expiresAt: number, value: string? }} = {}
+local partyCacheByPartyId: {[string]: { expiresAt: number, value: {[string]: any}? }} = {}
 local lastInviteAtByUserId: {[number]: number} = {}
 
 local function getOrCreateRemote(parent: Instance, className: string, name: string): Instance
@@ -137,18 +138,12 @@ local function saveParty(party: {[string]: any})
 end
 
 -- เพิ่มฟังก์ชัน UpdateParty สำหรับแก้ปัญหา Race Condition ด้วย UpdateAsync
-local function updateParty(partyId: string, transformFunction: (any) -> (any?, boolean)): (boolean, any?)
-	local deleteSignal = false
+local function updateParty(partyId: string, transformFunction: (any) -> any?): (boolean, any?)
 	local updatedValue
 	local success, err = pcall(function()
 		updatedValue = partyMap:UpdateAsync(partyId, function(oldParty)
 			if not oldParty then return nil end
-			local updatedParty, del = transformFunction(oldParty)
-			deleteSignal = del
-			
-			if del then
-				return nil -- Abandon update to signal deletion
-			end
+			local updatedParty = transformFunction(oldParty)
 			
 			if updatedParty then
 				updatedParty.updatedAt = os.time()
@@ -160,15 +155,9 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?, b
 	
 	if not success then
 		warn(string.format("[PartyInviteService] updateParty failed for %s: %s", partyId, tostring(err)))
-		return false, nil
-	end
-
-	if deleteSignal then
-		pcall(function() partyMap:RemoveAsync(partyId) end)
-		return true, nil
 	end
 	
-	return true, updatedValue
+	return success, updatedValue
 end
 
 local function ensureMemberNames(party: {[string]: any}): {[string]: string}
