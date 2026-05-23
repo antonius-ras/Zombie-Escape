@@ -100,12 +100,14 @@ local function heartbeatLoop()
 		-- คำนวณ throttle time ให้เหมาะสมกับจำนวนผู้เล่น
 		-- พยายามให้ลูปทั้งลูปใช้เวลาไม่เกิน 50% ของ PRESENCE_TTL_SECONDS
 		local totalBudget = PRESENCE_TTL_SECONDS * 0.5
-		local throttle = math.max(0.05, totalBudget / math.max(playerCount, 1))
+		local throttle = math.max(0.02, totalBudget / math.max(playerCount, 1))
 
 		-- Heartbeat processing
 		for _, player in ipairs(players) do
 			if not running then break end
-			task.spawn(writePresence, player.UserId)
+			if player:IsDescendantOf(Players) then
+				task.spawn(writePresence, player.UserId)
+			end
 			task.wait(throttle)
 		end
 		
