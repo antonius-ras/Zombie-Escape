@@ -129,24 +129,27 @@ local function clearUserPartyId(userId: number)
 	end
 end
 
-local function getPartyById(partyId: string): {[string]: any}?
+local function getPartyById(partyId: string): ({[string]: any}?, boolean)
 	local cached = partyCacheByPartyId[partyId]
 	if cached and cached.expiresAt > os.clock() then
-		return cached.value
+		return cached.value, true
 	end
 
 	local ok, party = pcall(function()
 		return partyMap:GetAsync(partyId)
 	end)
 	
-	local partyValue = if ok then party else nil
+	if not ok then
+		warn(string.format("[PartyInviteService] getPartyById failed for %s: %s", partyId, tostring(party)))
+		return nil, false
+	end
 	
 	partyCacheByPartyId[partyId] = {
 		expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
-		value = partyValue,
+		value = party,
 	}
 	
-	return partyValue
+	return party, true
 end
 
 local function saveParty(party: {[string]: any})
@@ -429,14 +432,19 @@ end
 local function getOrCreatePartyForLeader(userId: number)
 	local existingPartyId = getUserPartyId(userId)
 	if existingPartyId then
-		local existingParty = getPartyById(existingPartyId)
+		local existingParty, fetchOk = getPartyById(existingPartyId)
 		if existingParty then
 			if existingParty.leaderUserId ~= userId then
 				return existingParty, "not_leader"
 			end
 			return existingParty, nil
 		end
-		clearUserPartyId(userId)
+		
+		if fetchOk then
+			clearUserPartyId(userId)
+		else
+			return nil, "api_error"
+		end
 	end
 
 	return createPartyForLeader(userId), nil
@@ -528,10 +536,14 @@ local function handleGetParty(player: Player)
 		return { ok = true, data = nil }
 	end
 
-	local party = getPartyById(partyId)
+	local party, fetchOk = getPartyById(partyId)
 	if not party then
-		clearUserPartyId(player.UserId)
-		return { ok = true, data = nil }
+		if fetchOk then
+			clearUserPartyId(player.UserId)
+			return { ok = true, data = nil }
+		else
+			return { ok = false, message = "api_error" }
+		end
 	end
 
 	return { ok = true, data = buildPartySnapshot(party) }
@@ -638,18 +650,14 @@ local function handleRespondInvite(player: Player, payload: {[string]: any})
 		return { ok = false, message = "already_in_party" }
 	end
 
-	-- ใช้ UpdateAsync เพื่อแก้ปัญหา Race Condition ตอนรับคนเข้าปาร์ตี้
-	local errorMessage = nil
 
-	local success, updatedPartySnapshot = updateParty(invite.partyId, function(party)
+	local success, updatedPartySnapshot, err = updateParty(invite.partyId, function(party)
 		if not party then
-			errorMessage = "party_not_found"
-			return nil -- กรณีปาร์ตี้ไม่มีอยู่แล้ว (หรือถูกลบ) ให้คืน nil ตามเดิม
+			return nil, "party_not_found"
 		end
 
 		if #party.memberUserIds >= MAX_PARTY_SIZE then
-			errorMessage = "party_full"
-			return party -- คืนค่าเดิมกลับไปเพื่อยกเลิกการอัปเดต โดยไม่ลบปาร์ตี้ทิ้ง
+			return party, "party_full"
 		end
 
 		if not containsUser(party.memberUserIds, player.UserId) then
@@ -660,14 +668,13 @@ local function handleRespondInvite(player: Player, payload: {[string]: any})
 		party.memberNames[tostring(player.UserId)] = player.DisplayName
 		party.memberNames[tostring(invite.fromUserId)] = invite.fromName
 		
-		errorMessage = nil -- Clear error on successful pass
-		return party
+		return party, nil
 	end)
 
 	removeInvite(inviteId)
 
-	if not success or errorMessage or not updatedPartySnapshot then
-		return { ok = false, message = errorMessage or "update_failed" }
+	if not success or err or not updatedPartySnapshot then
+		return { ok = false, message = err or "update_failed" }
 	end
 
 	setUserPartyId(player.UserId, updatedPartySnapshot.partyId)
@@ -1001,9 +1008,11 @@ function PartyInviteService.GetPartyDataForUser(userId: number): {[string]: any}
 		return nil
 	end
 
-	local party = getPartyById(partyId)
+	local party, fetchOk = getPartyById(partyId)
 	if not party then
-		clearUserPartyId(userId)
+		if fetchOk then
+			clearUserPartyId(userId)
+		end
 		return nil
 	end
 
