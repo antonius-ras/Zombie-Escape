@@ -158,9 +158,20 @@ local function startPartyQueue(player: Player)
 				local teleportOptions = Instance.new("TeleportOptions")
 				teleportOptions.ReservedServerAccessCode = accessCode
 				
-				local teleportSuccess, teleportError = pcall(function()
-					TeleportService:TeleportAsync(QueueConfig.GameplayPlaceId, localPlayers, teleportOptions)
-				end)
+				local activePlayers = {}
+                for _, p in ipairs(localPlayers) do
+                    if p:IsDescendantOf(Players) then
+                        table.insert(activePlayers, p)
+                    end
+                end
+
+                if #activePlayers == 0 then
+                    return
+                end
+
+                local teleportSuccess, teleportError = pcall(function()
+                    TeleportService:TeleportAsync(QueueConfig.GameplayPlaceId, activePlayers, teleportOptions)
+                end)
 				
 				if not teleportSuccess then
 					warn("[QueueTeleportService] TeleportAsync failed:", teleportError)
