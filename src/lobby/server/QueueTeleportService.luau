@@ -150,7 +150,16 @@ local function startPartyQueue(player: Player)
 			if ok then
 				local teleportOptions = Instance.new("TeleportOptions")
 				teleportOptions.ReservedServerAccessCode = accessCode
-				TeleportService:TeleportAsync(QueueConfig.GameplayPlaceId, localPlayers, teleportOptions)
+				
+				local teleportSuccess, teleportError = pcall(function()
+					TeleportService:TeleportAsync(QueueConfig.GameplayPlaceId, localPlayers, teleportOptions)
+				end)
+				
+				if not teleportSuccess then
+					warn("[QueueTeleportService] TeleportAsync failed:", teleportError)
+					firePartyStatus(currentParty.memberUserIds, "party_queue_failed", LocalizationKeys["errors.teleport_failed"])
+					return
+				end
 
 				-- ส่ง AccessCode ไปให้ Remote Players เพื่อให้เขาวาร์ปตามมา
 				if #remoteUserIds > 0 then
