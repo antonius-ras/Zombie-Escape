@@ -15,19 +15,6 @@ local presenceMap = MemoryStoreService:GetHashMap(PRESENCE_MAP_NAME)
 local localPresenceByUserId: {[number]: {[string]: any}} = {}
 local presenceReadCacheByUserId: {[number]: { found: boolean, value: any, expiresAt: number }} = {}
 
-task.spawn(function()
-	while true do
-		task.wait(60) -- ตรวจสอบทุกๆ 60 วินาที
-		
-		local now = os.clock()
-		for userId, cacheData in pairs(presenceReadCacheByUserId) do
-			if now >= cacheData.expiresAt then
-				presenceReadCacheByUserId[userId] = nil
-			end
-		end
-	end
-end)
-
 local playerAddedConn: RBXScriptConnection?
 local playerRemovingConn: RBXScriptConnection?
 
@@ -84,11 +71,21 @@ end
 
 local function heartbeatLoop()
 	while running do
+		-- Heartbeat processing
 		for _, player in ipairs(Players:GetPlayers()) do
 			if not running then break end
 			writePresence(player.UserId)
 			task.wait(0.1) -- Throttle to avoid MemoryStore limits
 		end
+		
+		-- Cache cleanup
+		local now = os.clock()
+		for userId, cacheData in pairs(presenceReadCacheByUserId) do
+			if now >= cacheData.expiresAt then
+				presenceReadCacheByUserId[userId] = nil
+			end
+		end
+		
 		task.wait(HEARTBEAT_INTERVAL_SECONDS)
 	end
 end
