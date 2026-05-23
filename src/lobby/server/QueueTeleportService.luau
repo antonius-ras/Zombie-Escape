@@ -121,6 +121,11 @@ local function startPartyQueue(player: Player)
 		partyQueueStateByPartyId[partyData.partyId] = nil
 		firePartyStatus(memberUserIds, "party_queue_teleporting")
 
+		-- ตรวจสอบว่าหัวหน้าปาร์ตี้ยังอยู่ในเซิร์ฟเวอร์หรือไม่ (Code Review Fix)
+		if not player:IsDescendantOf(Players) then
+			return
+		end
+
 		-- Get the latest party member list immediately before teleporting (Code Review Fix)
 		local currentParty = PartyInviteService.GetPartyDataForUser(player.UserId)
 		if not currentParty or currentParty.partyId ~= partyData.partyId then

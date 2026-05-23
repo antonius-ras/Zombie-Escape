@@ -6,4 +6,5 @@ return {
     ["errors.party_teleport_failed"] = "Party teleport failed",
     ["errors.leave_party_before_solo"] = "Leave the party before starting solo",
     ["errors.teleport_failed"] = "Teleport failed",
+    ["errors.leader_left"] = "Leader left the server",
 }

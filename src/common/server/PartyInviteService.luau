@@ -105,6 +105,7 @@ local function setUserPartyId(userId: number, partyId: string)
 		expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
 		value = partyId,
 	}
+	PresenceService.UpdatePartyId(userId, partyId)
 	local success, err = pcall(function()
 		userPartyMap:SetAsync(tostring(userId), partyId, PARTY_TTL_SECONDS)
 	end)
@@ -118,6 +119,7 @@ local function clearUserPartyId(userId: number)
 		expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
 		value = nil,
 	}
+	PresenceService.UpdatePartyId(userId, nil)
 	local success, err = pcall(function()
 		userPartyMap:RemoveAsync(tostring(userId))
 	end)
@@ -157,6 +159,8 @@ local function saveParty(party: {[string]: any})
 end
 
 -- เพิ่มฟังก์ชัน UpdateParty สำหรับแก้ปัญหา Race Condition ด้วย UpdateAsync
+-- IMPORTANT: transformFunction MUST NOT yield (no task.wait, GetAsync, etc.) 
+-- because it is called inside MemoryStore UpdateAsync which prohibits yielding.
 local function updateParty(partyId: string, transformFunction: (any) -> (any?, string?)): (boolean, any?, string?)
 	local updatedValue
 	local errorMessage
@@ -841,6 +845,7 @@ local function onPartyMessage(message)
 			local target = Players:GetPlayerByUserId(tonumber(userId) or -1)
 			if target then
 				partyEventRE:FireClient(target, "PartyUpdated", snapshot)
+				PresenceService.UpdatePartyId(target.UserId, snapshot.partyId)
 			end
 		end
 		return
@@ -867,6 +872,7 @@ local function onPartyMessage(message)
 			local target = Players:GetPlayerByUserId(tonumber(userId) or -1)
 			if target then
 				partyEventRE:FireClient(target, "PartyUpdated", nil)
+				PresenceService.UpdatePartyId(target.UserId, nil)
 			end
 		end
 	end

@@ -17,8 +17,7 @@ local userPartyMap = MemoryStoreService:GetHashMap(USER_PARTY_MAP_NAME)
 local localPresenceByUserId: {[number]: {[string]: any}} = {}
 local presenceReadCacheByUserId: {[number]: { found: boolean, value: any, expiresAt: number }} = {}
 local pendingPresenceFetches: {[string]: {thread}} = {}
-local partyIdCache: {[number]: { expiresAt: number, partyId: string? }} = {}
-local PARTY_CACHE_TTL = 30 -- Cache party ID locally for 30 seconds
+local partyIdCache: {[number]: { partyId: string? }} = {}
 local playerAddedConn: RBXScriptConnection?
 local playerRemovingConn: RBXScriptConnection?
 
@@ -32,7 +31,7 @@ local function buildPresencePayload(userId: number): {[string]: any}
 	local cachedParty = partyIdCache[userId]
 	local partyId = nil
 	
-	if cachedParty and cachedParty.expiresAt > os.clock() then
+	if cachedParty then
 		partyId = cachedParty.partyId
 	else
 		local ok, val = pcall(function()
@@ -40,7 +39,7 @@ local function buildPresencePayload(userId: number): {[string]: any}
 		end)
 		if ok then 
 			partyId = val 
-			partyIdCache[userId] = { expiresAt = os.clock() + PARTY_CACHE_TTL, partyId = partyId }
+			partyIdCache[userId] = { partyId = partyId }
 		end
 	end
 
@@ -245,6 +244,15 @@ function PresenceService.GetPresenceByUserIds(userIds: {number}): {[number]: any
 		end
 	end
 	return result
+end
+
+function PresenceService.UpdatePartyId(userId: number, partyId: string?)
+	partyIdCache[userId] = { partyId = partyId }
+	
+	-- If player is local, trigger an immediate presence update to reflect the change
+	if Players:GetPlayerByUserId(userId) then
+		task.spawn(writePresence, userId)
+	end
 end
 
 function PresenceService.Destroy()

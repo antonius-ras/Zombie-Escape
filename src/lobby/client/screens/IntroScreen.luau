@@ -153,6 +153,7 @@ local function runRealLoading(epoch: number)
 	local lastUiUpdate = 0
 	
 	local finished = false
+	local finishedEvent = Instance.new("BindableEvent")
 	
 	-- เรียกใช้ PreloadAsync โดยตรงโดยไม่ต้อง yield Thread หลักจนค้าง
 	-- แต่ใช้การตรวจสอบสถานะแบบไม่บล็อก
@@ -170,15 +171,27 @@ local function runRealLoading(epoch: number)
 			end)
 		end)
 		finished = true
+		finishedEvent:Fire()
 	end)
 
-	-- แทนที่จะ Yield ถาวร ให้รอสถานะเสร็จสิ้นแบบไม่ค้าง (ใช้ loop สั้นๆ พร้อม timeout)
-	local startTime = os.clock()
-	while not finished and os.clock() - startTime < 10 and isEpochCurrent(epoch) do
-		task.wait(0.5)
+	-- แทนที่จะ Polling ด้วย Wait นานๆ ให้รอ Event หรือ Timeout
+	if not finished then
+		local timeoutThread = task.delay(10, function()
+			if not finished then
+				finished = true
+				finishedEvent:Fire()
+			end
+		end)
+		
+		-- รอจนกว่าจะเสร็จหรือเปลี่ยน Epoch
+		while not finished and isEpochCurrent(epoch) do
+			finishedEvent.Event:Wait()
+		end
+		
+		task.cancel(timeoutThread)
 	end
 	
-	finished = true -- Force complete
+	finishedEvent:Destroy()
 
 	if not isEpochCurrent(epoch) then return end
 
