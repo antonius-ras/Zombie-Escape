@@ -137,25 +137,34 @@ local function saveParty(party: {[string]: any})
 end
 
 -- เพิ่มฟังก์ชัน UpdateParty สำหรับแก้ปัญหา Race Condition ด้วย UpdateAsync
-local function updateParty(partyId: string, transformFunction: (any) -> (any?)): (boolean, any?)
+local function updateParty(partyId: string, transformFunction: (any) -> (any?, boolean)): (boolean, any?)
 	local updatedValue
+	local shouldDelete = false
 	local success, err = pcall(function()
 		updatedValue = partyMap:UpdateAsync(partyId, function(oldParty)
 			if not oldParty then return nil end
-			local updatedParty = transformFunction(oldParty)
+			local updatedParty, deleteSignal = transformFunction(oldParty)
 			
-			-- หากมีการคืนค่าข้อมูลใหม่ ให้จดบันทึกเวลาอัปเดต
+			if deleteSignal then
+				shouldDelete = true
+				return oldParty -- คืนค่าเดิมเพื่อจบ UpdateAsync โดยไม่เปลี่ยนแปลง
+			end
+			
 			if updatedParty then
 				updatedParty.updatedAt = os.time()
 			end
 			
-			-- คืนค่า updatedParty ตรงๆ (ถ้าเป็น nil จะเป็นการลบ Key)
 			return updatedParty
 		end, PARTY_TTL_SECONDS)
 	end)
-	if not success then
+	
+	if success and shouldDelete then
+		pcall(function() partyMap:RemoveAsync(partyId) end)
+		updatedValue = nil
+	elseif not success then
 		warn(string.format("[PartyInviteService] updateParty failed for %s: %s", partyId, tostring(err)))
 	end
+	
 	return success, updatedValue
 end
 
@@ -453,15 +462,16 @@ local function handleGetOnlineFriends(player: Player)
 		return { ok = false, message = errorMessage or "friends_fetch_failed" }
 	end
 
-	local presenceByUserId = PresenceService.GetPresenceByUserIds(friendIds)
-	local result = {}
-	
-	-- Batch fetch party IDs in parallel
+	local presenceByUserId
 	local partyIdsByUserId = {}
+	
 	local runningThread = coroutine.running()
 	local MAX_CONCURRENT_REQUESTS = 15
-	local completedCount = 0
 	local totalToFetch = #friendIds
+	
+	-- ตัวนับสำหรับงานที่เสร็จแล้ว ( Presence + เพื่อนทั้งหมด )
+	local completedCount = 0
+	local totalExpected = 1 + totalToFetch
 	local resumed = false
 
 	local function resume()
@@ -470,6 +480,16 @@ local function handleGetOnlineFriends(player: Player)
 		task.spawn(runningThread)
 	end
 
+	-- 1. ดึงข้อมูล Presence แบบขนาน
+	task.spawn(function()
+		presenceByUserId = PresenceService.GetPresenceByUserIds(friendIds) or {}
+		completedCount += 1
+		if completedCount >= totalExpected then
+			resume()
+		end
+	end)
+
+	-- 2. ระบบดึงข้อมูลปาร์ตี้แบบกระจายงาน (Concurrency)
 	local function fetchPartyId(userId)
 		local partyId = getUserPartyId(userId)
 		if partyId then
@@ -477,21 +497,36 @@ local function handleGetOnlineFriends(player: Player)
 		end
 		
 		completedCount += 1
-		if completedCount >= totalToFetch then
+		if completedCount >= totalExpected then
 			resume()
 		end
 	end
 
-	for i = 1, math.min(MAX_CONCURRENT_REQUESTS, totalToFetch) do
-		task.spawn(function()
-			for j = i, totalToFetch, MAX_CONCURRENT_REQUESTS do
-				fetchPartyId(friendIds[j])
-			end
-		end)
+	if totalToFetch > 0 then
+		for i = 1, math.min(MAX_CONCURRENT_REQUESTS, totalToFetch) do
+			task.spawn(function()
+				for j = i, totalToFetch, MAX_CONCURRENT_REQUESTS do
+					fetchPartyId(friendIds[j])
+				end
+			end)
+		end
+	else
+		-- ถ้าไม่มีเพื่อน ให้ถือว่างานดึงปาร์ตี้เสร็จสิ้น
+		completedCount += totalToFetch
+		if completedCount >= totalExpected then
+			resume()
+		end
 	end
-	
-	if totalToFetch > 0 then coroutine.yield() end
 
+	-- 3. สั่งหยุดรอ (Yield) ทีเดียวตรงนี้ รอให้งานทุกอย่างเสร็จครบพร้อมกัน
+	if totalExpected > 1 then
+		coroutine.yield()
+	elseif totalExpected == 1 then
+		-- กรณีมีแค่ presence แต่อาจไม่มีเพื่อน
+		if not resumed then resume() end
+	end
+
+	local result = {}
 	for _, friend in ipairs(friends) do
 		local presence = presenceByUserId[friend.userId]
 		if not presence then

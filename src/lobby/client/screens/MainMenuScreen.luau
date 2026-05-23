@@ -315,8 +315,7 @@ end
 function MainMenuScreen.hideQueueButton(onHidden: (() -> ())?)
 	local epoch = nextEpoch()
 	setInteractive(false)
-	bounceOut(_playBtn, 0, epoch)
-	task.delay(0.45, function()
+	bounceOut(_playBtn, 0, epoch, function()
 		if not isEpochCurrent(epoch) then
 			return
 		end

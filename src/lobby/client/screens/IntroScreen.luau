@@ -65,9 +65,8 @@ local function bounceIn(obj: GuiObject, delayTime: number?, epoch: number?)
 	local targetPos = getBasePosition(obj)
 	obj.Position    = targetPos + UDim2.new(0, 0, 0.3, 0)
 	obj.Visible     = true
-	if pcall(function() return obj.BackgroundTransparency end) then
-		obj.BackgroundTransparency = 1
-	end
+	obj.BackgroundTransparency = 1
+	
 	task.delay(delayTime or 0, function()
 		if not isEpochCurrent(epoch) then
 			return
