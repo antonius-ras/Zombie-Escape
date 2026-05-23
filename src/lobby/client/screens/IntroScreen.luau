@@ -115,15 +115,19 @@ local function bounceOut(obj: GuiObject, delayTime: number?, epoch: number?, cal
 				)
 			end
 		end
-		task.Completed( function()
-            if not isEpochCurrent(epoch) then
-                return
-            end
-            obj.Position = basePos
-            if callback then
-                callback()
-            end
-        end)
+		if t then
+			t.Completed:Connect(function()
+				if not isEpochCurrent(epoch) then
+					return
+				end
+				obj.Position = basePos
+				if callback then
+					callback()
+				end
+			end)
+		elseif callback then
+			callback()
+		end
 	end)
 end
 
@@ -209,7 +213,7 @@ local function showPlayButton(epoch: number)
 	_playButton.Visible = true
 	bounceIn(_playButton, 0, epoch)
 	
-	task.Completed(function()
+	task.delay(0.55, function()
 		if not isEpochCurrent(epoch) then return end
 		_isInteractive = true
 		_playButton.Active = true

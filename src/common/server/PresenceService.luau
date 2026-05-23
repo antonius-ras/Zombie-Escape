@@ -105,7 +105,7 @@ local function heartbeatLoop()
 		-- Heartbeat processing
 		for _, player in ipairs(players) do
 			if not running then break end
-			writePresence(player.UserId)
+			task.spawn(writePresence, player.UserId)
 			task.wait(throttle)
 		end
 		
