@@ -202,7 +202,7 @@ local function handlePartyTeleportEvent(message)
 		end
 	end
 	
-	if #playersToTeleport > 0 then
+	if #playersToTeleport > 0 and data.placeId == QueueConfig.GameplayPlaceId then
 		local teleportOptions = Instance.new("TeleportOptions")
 		teleportOptions.ReservedServerAccessCode = data.accessCode
 		pcall(function()

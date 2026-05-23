@@ -176,7 +176,7 @@ local function updateParty(partyId: string, transformFunction: (any) -> (any?, s
 			end
 			
 			return updatedParty
-		end)
+		end, PARTY_TTL_SECONDS)
 	end)
 	
 	if not success then
@@ -287,7 +287,7 @@ local function getFriendListEntries(userId: number): ({any}?, {number}?, string?
 				displayNameCache[friend.Id] = { name = friend.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
 			end
 		end
-		if pages.IsFinished or pageCount >= 5 then break end
+		if pages.IsFinished or pageCount >= 10 then break end
 		local advancedOk = pcall(function() pages:AdvanceToNextPageAsync() end)
 		if not advancedOk then break end
 	end

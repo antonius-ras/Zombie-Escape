@@ -116,7 +116,7 @@ local function bounceOut(obj: GuiObject, delayTime: number?, epoch: number?, cal
 			end
 		end
 		task.delay(0.42, function()
-            if not isEpochCurrent(epoch) or obj.Visible then
+            if not isEpochCurrent(epoch) then
                 return
             end
             obj.Position = basePos
