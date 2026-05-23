@@ -7,7 +7,6 @@
 local TweenService    = game:GetService("TweenService")
 local ContentProvider = game:GetService("ContentProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UIAnimationHelper = require(ReplicatedStorage.common.modules.UIAnimationHelper)
 
 local IntroScreen = {}
 
@@ -20,17 +19,28 @@ local _loadingText: TextLabel
 local _playButton: TextButton
 local _fillSizeY: UDim
 
+local LocalizationKeys = require((ReplicatedStorage :: any).common.modules:WaitForChild("LocalizationKeys"))
+
 local _onPlayPressed: () -> () -- callback ส่งมาจาก UIManager
 local _basePositions: {[GuiObject]: UDim2} = {}
 local _transitionEpoch = 0
 local _pulseEpoch = 0
 local _isInteractive = false
-
 local BG_TRANSPARENCY = 0.8
+local LOADING_MESSAGES = {
+	LOADING_UI = LocalizationKeys["ui.loading_ui"],
+	LOADING_ASSETS = LocalizationKeys["ui.loading_assets"],
+	LOADING_ICONS = LocalizationKeys["ui.loading_icons"],
+	LOADING_SOUNDS = LocalizationKeys["ui.loading_sounds"],
+	ALMOST_DONE = LocalizationKeys["ui.almost_done"],
+}
 
 -- ============================================================
 -- Utils (private)
 -- ============================================================
+
+local UIAnimationUtils = require(script.Parent.Parent.utils.UIAnimationUtils)
+local safeTween = UIAnimationUtils.safeTween
 
 local function nextEpoch(): number
 	_transitionEpoch += 1
@@ -54,20 +64,72 @@ local function getBasePosition(obj: GuiObject): UDim2
 end
 
 local function bounceIn(obj: GuiObject, delayTime: number?, epoch: number?)
+	local targetPos = getBasePosition(obj)
+	obj.Position    = targetPos + UDim2.new(0, 0, 0.3, 0)
+	obj.Visible     = true
+	obj.BackgroundTransparency = 1
+	
 	task.delay(delayTime or 0, function()
 		if not isEpochCurrent(epoch) then
 			return
 		end
-		UIAnimationHelper.bounceIn(obj)
+		safeTween(obj,
+			TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{ Position = targetPos, BackgroundTransparency = BG_TRANSPARENCY }
+		)
+		for _, child in ipairs(obj:GetDescendants()) do
+			if child:IsA("TextLabel") or child:IsA("TextButton") then
+				safeTween(child,
+					TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ TextTransparency = 0 }
+				)
+			elseif child:IsA("ImageLabel") or child:IsA("ImageButton") then
+				safeTween(child,
+					TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ ImageTransparency = 0 }
+				)
+			end
+		end
 	end)
 end
 
 local function bounceOut(obj: GuiObject, delayTime: number?, epoch: number?, callback: (() -> ())?)
+	local basePos = getBasePosition(obj)
+	local targetPos = basePos + UDim2.new(0, 0, 0.4, 0)
 	task.delay(delayTime or 0, function()
 		if not isEpochCurrent(epoch) then
 			return
 		end
-		UIAnimationHelper.bounceOut(obj, UDim2.fromScale(0, 0.4), callback)
+		local t = safeTween(obj,
+			TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+			{ Position = targetPos, BackgroundTransparency = 1 }
+		)
+		for _, child in ipairs(obj:GetDescendants()) do
+			if child:IsA("TextLabel") or child:IsA("TextButton") then
+				safeTween(child,
+					TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ TextTransparency = 1 }
+				)
+			elseif child:IsA("ImageLabel") or child:IsA("ImageButton") then
+				safeTween(child,
+					TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ ImageTransparency = 1 }
+				)
+			end
+		end
+		if t then
+			t.Completed:Connect(function()
+				if not isEpochCurrent(epoch) then
+					return
+				end
+				obj.Position = basePos
+				if callback then
+					callback()
+				end
+			end)
+		elseif callback then
+			callback()
+		end
 	end)
 end
 
@@ -76,60 +138,99 @@ end
 -- ============================================================
 
 local function runRealLoading(epoch: number)
+	local function getText(p: number)
+		if p < 0.25 then return LOADING_MESSAGES.LOADING_UI
+		elseif p < 0.50 then return LOADING_MESSAGES.LOADING_ASSETS
+		elseif p < 0.75 then return LOADING_MESSAGES.LOADING_ICONS
+		elseif p < 0.95 then return LOADING_MESSAGES.LOADING_SOUNDS
+		else return LOADING_MESSAGES.ALMOST_DONE
+		end
+	end
+
 	local assetsToLoad = {}
-	for _, v in ipairs(game:GetDescendants()) do
-		if v:IsA("BasePart") or v:IsA("Decal") or v:IsA("Texture")
-			or v:IsA("Sound") or v:IsA("Animation")
-			or v:IsA("MeshPart") or v:IsA("SpecialMesh")
-		then
-			table.insert(assetsToLoad, v)
+	local containers = { _gui }
+	
+	-- เพิ่ม Workspace.Lobby สำหรับ Preload 3D Assets (Code Review Fix)
+	local lobbyFolder = workspace:FindFirstChild("Lobby")
+	if lobbyFolder then
+		table.insert(containers, lobbyFolder)
+	end
+	
+	for _, container in ipairs(containers) do
+		for _, v in ipairs(container:GetDescendants()) do
+			if v:IsA("ImageLabel") or v:IsA("ImageButton") or v:IsA("Sound") or v:IsA("MeshPart") or v:IsA("SpecialMesh") or v:IsA("Decal") or v:IsA("Texture") then
+				table.insert(assetsToLoad, v)
+			end
 		end
 	end
 
 	local total  = math.max(#assetsToLoad, 1)
 	local loaded = 0
 	local lastUiUpdate = 0
-
-	local function getText(p: number)
-		if p < 0.25 then return "LOADING..."
-		elseif p < 0.50 then return "LOADING MAP..."
-		elseif p < 0.75 then return "LOADING MODELS..."
-		elseif p < 0.95 then return "LOADING SOUNDS..."
-		else return "ALMOST DONE..."
+	
+	local finished = false
+	local finishedEvent = Instance.new("BindableEvent")
+	
+	-- เรียกใช้ PreloadAsync โดยตรงโดยไม่ต้อง yield Thread หลักจนค้าง
+	-- แต่ใช้การตรวจสอบสถานะแบบไม่บล็อก
+	task.spawn(function()
+		pcall(function()
+			ContentProvider:PreloadAsync(assetsToLoad, function(_id, _status)
+				if not isEpochCurrent(epoch) or finished then return end
+				loaded += 1
+				local now = os.clock()
+				if now - lastUiUpdate < 1 / 30 and loaded < total then return end
+				lastUiUpdate = now
+				local progress = loaded / total
+				_loadingFill.Size = UDim2.new(progress, 0, _fillSizeY.Scale, _fillSizeY.Offset)
+				_loadingText.Text = getText(progress)
+			end)
+		end)
+		finished = true
+		if isEpochCurrent(epoch) then
+    		finishedEvent:Fire()
 		end
-	end
-
-	ContentProvider:PreloadAsync(assetsToLoad, function(_id, _status)
-		if not isEpochCurrent(epoch) then
-			return
-		end
-		loaded += 1
-		local now = os.clock()
-		if now - lastUiUpdate < 1 / 30 and loaded < total then
-			return
-		end
-		lastUiUpdate = now
-		local progress = loaded / total
-		_loadingFill.Size = UDim2.new(progress, 0, _fillSizeY.Scale, _fillSizeY.Offset)
-		_loadingText.Text = getText(progress)
 	end)
 
-	if not isEpochCurrent(epoch) then
-		return
+	-- แทนที่จะ Polling ด้วย Wait นานๆ ให้รอ Event หรือ Timeout
+	if not finished then
+		local timeoutThread = task.delay(10, function()
+			if not finished then
+				finished = true
+				finishedEvent:Fire()
+			end
+		end)
+		
+		-- รอจนกว่าจะเสร็จหรือเปลี่ยน Epoch
+		while not finished and isEpochCurrent(epoch) do
+			finishedEvent.Event:Wait()
+		end
+		
+		task.cancel(timeoutThread)
 	end
+	
+	finishedEvent:Destroy()
 
-	UIAnimationHelper.tween(_loadingFill,
+	if not isEpochCurrent(epoch) then return end
+
+	safeTween(_loadingFill,
 		TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Size = UDim2.new(1, 0, _fillSizeY.Scale, _fillSizeY.Offset) }
 	)
-	_loadingText.Text = "READY!"
+	_loadingText.Text = LocalizationKeys["ui.ready"]
 	task.wait(0.35)
 end
 
 local function showPlayButton(epoch: number)
+	_playButton.Visible = true
 	bounceIn(_playButton, 0, epoch)
-	_isInteractive = true
-	_playButton.Active = true
+	
+	task.delay(0.55, function()
+		if not isEpochCurrent(epoch) then return end
+		_isInteractive = true
+		_playButton.Active = true
+	end)
+	
 	_pulseEpoch += 1
 	local pulseEpoch = _pulseEpoch
 
@@ -137,13 +238,13 @@ local function showPlayButton(epoch: number)
 	task.spawn(function()
 		task.wait(0.65)
 		while isEpochCurrent(epoch) and pulseEpoch == _pulseEpoch and _playButton.Visible do
-			UIAnimationHelper.tween(_playButton,
+			safeTween(_playButton,
 				TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
 				{ BackgroundTransparency = math.min(BG_TRANSPARENCY + 0.1, 1) }
 			)
 			task.wait(0.9)
 			if not isEpochCurrent(epoch) or pulseEpoch ~= _pulseEpoch or not _playButton.Visible then break end
-			UIAnimationHelper.tween(_playButton,
+			safeTween(_playButton,
 				TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
 				{ BackgroundTransparency = BG_TRANSPARENCY }
 			)
@@ -171,13 +272,33 @@ function IntroScreen.init(gui: ScreenGui, onPlayPressed: () -> ())
 	_loadingFill.Size     = UDim2.new(0, 0, _fillSizeY.Scale, _fillSizeY.Offset)
 	_playButton.Visible   = false
 	_playButton.Active    = false
+	_playButton.Text      = LocalizationKeys["ui.play"]
+
+	_basePositions[_loadingBarBG] = _loadingBarBG.Position
+	_basePositions[_playButton] = _playButton.Position
 
 	-- Hover
-	UIAnimationHelper.applyHover(_playButton)
+	local origSize: UDim2
+	_playButton.MouseEnter:Connect(function()
+		if not _isInteractive then return end
+		if not origSize then origSize = _playButton.Size end
+		safeTween(_playButton, TweenInfo.new(0.2), {
+			Size = origSize + UDim2.fromOffset(12, 6)
+		})
+	end)
+	_playButton.MouseLeave:Connect(function()
+		if not _isInteractive then return end
+		if origSize then
+			safeTween(_playButton, TweenInfo.new(0.2), { Size = origSize })
+		end
+	end)
 
 	-- Play button
 	_playButton.MouseButton1Click:Connect(function()
-		if not _isInteractive then return end
+		
+		if not _isInteractive then
+			return
+		end
 		if _onPlayPressed then
 			_isInteractive = false
 			_playButton.Active = false
@@ -186,30 +307,72 @@ function IntroScreen.init(gui: ScreenGui, onPlayPressed: () -> ())
 	end)
 end
 
+local Lighting = game:GetService("Lighting")
+local _spookyCC: ColorCorrectionEffect? = nil
+
+-- เริ่ม loading และแสดง UI
 function IntroScreen.start()
 	local epoch = nextEpoch()
 	_isInteractive = false
 	_playButton.Active = false
 	_gui.Enabled = true
 	
-	UIAnimationHelper.slideIn(_background, "Top")
+	-- สร้างเอฟเฟกต์แสงหน้ากลัว (Spooky Lighting)
+	if not _spookyCC then
+		_spookyCC = Instance.new("ColorCorrectionEffect")
+		_spookyCC.Name = "IntroSpookyEffect"
+		_spookyCC.Brightness = 0
+		_spookyCC.Contrast = 0.2
+		_spookyCC.Saturation = -0.4
+		_spookyCC.TintColor = Color3.fromRGB(215, 250, 255) -- โทนเขียวมืดๆ
+		_spookyCC.Parent = Lighting
+	end
 	
 	task.spawn(function()
 		runRealLoading(epoch)
-		if not isEpochCurrent(epoch) then return end
-		UIAnimationHelper.slideOut(_loadingBarBG, "Bottom", function()
+		if not isEpochCurrent(epoch) then
+			return
+		end
+		-- ซ่อน loading bar
+		bounceOut(_loadingBarBG, 0, epoch, function()
 			_loadingBarBG.Visible = false
+			-- แสดงปุ่ม
 			showPlayButton(epoch)
 		end)
 	end)
 end
 
+-- เด้งออกทั้งหมด แล้ว disable
 function IntroScreen.hide(onHidden: (() -> ())?)
 	local epoch = nextEpoch()
 	_pulseEpoch += 1
 	_isInteractive = false
 	_playButton.Active = false
-	UIAnimationHelper.slideOut(_background, "Top", onHidden)
+	
+	-- ค่อยๆ ปิดเอฟเฟกต์แสงน่ากลัว (Fade out spooky lighting)
+	if _spookyCC then
+		local ccTween = TweenService:Create(_spookyCC, TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+			Brightness = 0,
+			Contrast = 0,
+			Saturation = 0,
+			TintColor = Color3.fromRGB(255, 255, 255)
+		})
+		ccTween.Completed:Connect(function()
+			if _spookyCC then
+				_spookyCC:Destroy()
+				_spookyCC = nil
+			end
+		end)
+		ccTween:Play()
+	end
+
+	bounceOut(_playButton, 0, epoch, function()
+		_playButton.Visible = false
+		_gui.Enabled = false
+		if onHidden then
+			onHidden()
+		end
+	end)
 end
 
 return IntroScreen

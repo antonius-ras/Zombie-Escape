@@ -27,12 +27,26 @@ end
 
 local commonServer = (ServerScriptService :: any).common
 
+-- 1. Database & Profiles
 local dataManager = requireModule(commonServer.DataManager, "DataManager")
 local profileZombieEscape = requireModule(commonServer.ProfileZombieEscape.ProfileZombieEscape, "ProfileZombieEscape")
-local partyManager = requireModule(commonServer.PartyManager, "PartyManager")
-local serverListFetcher = requireModule(commonServer.ServerListFetcher, "ServerListFetcher")
 
+-- 2. Social & Party
+local presenceService = requireModule(commonServer.PresenceService, "PresenceService")
+local partyInviteService = requireModule(commonServer.PartyInviteService, "PartyInviteService")
+
+-- 3. Matchmaking & Queues
+local serverListFetcher = requireModule(commonServer.ServerListFetcher, "ServerListFetcher")
+local queueTeleportService = requireModule(script:WaitForChild("QueueTeleportService"), "QueueTeleportService")
+
+-- Init Database
 initModule(dataManager, "DataManager")
 initModule(profileZombieEscape, "ProfileZombieEscape")
-initModule(partyManager, "PartyManager")
+
+-- Init Social (Lobby)
+initModule(presenceService, "PresenceService", "lobby")
+initModule(partyInviteService, "PartyInviteService")
+
+-- Init Matchmaking
 initModule(serverListFetcher, "ServerListFetcher")
+initModule(queueTeleportService, "QueueTeleportService")

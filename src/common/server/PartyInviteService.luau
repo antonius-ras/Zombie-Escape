@@ -1,0 +1,1045 @@
+local PartyInviteService = {}
+
+local HttpService = game:GetService("HttpService")
+local MemoryStoreService = game:GetService("MemoryStoreService")
+local MessagingService = game:GetService("MessagingService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local PresenceService = require(script.Parent:WaitForChild("PresenceService"))
+local LocalizationKeys = require((ReplicatedStorage :: any).common.modules:WaitForChild("LocalizationKeys"))
+
+local PARTY_MAP_NAME = "GlobalPartyMapV1"
+local USER_PARTY_MAP_NAME = "GlobalUserPartyMapV1"
+local INVITE_MAP_NAME = "GlobalPartyInviteMapV1"
+local PARTY_TOPIC_NAME = "GlobalPartyEventsV1"
+
+local PARTY_TTL_SECONDS = 60 * 60
+local USER_MAPPING_TTL_SECONDS = 24 * 60 * 60 -- เพิ่มตัวแปรนี้สำหรับ userPartyMap (24 ชั่วโมง)
+local INVITE_TTL_SECONDS = 30
+local MAX_PARTY_SIZE = 4
+local FRIEND_LIST_CACHE_TTL_SECONDS = 15
+local USER_PARTY_CACHE_TTL_SECONDS = 5
+local DISPLAY_NAME_CACHE_TTL_SECONDS = 3600 -- เพิ่มค่าคงที่สำหรับจำเวลาชื่อผู้เล่น
+
+local REQUEST_RF_NAME = "PartyRequestRF"
+local PARTY_EVENT_RE_NAME = "PartyEventRE"
+
+local initialized = false
+local subscription: RBXScriptConnection?
+local playerRemovingConn: RBXScriptConnection?
+
+local partyMap = MemoryStoreService:GetHashMap(PARTY_MAP_NAME)
+local userPartyMap = MemoryStoreService:GetHashMap(USER_PARTY_MAP_NAME)
+local inviteMap = MemoryStoreService:GetHashMap(INVITE_MAP_NAME)
+
+local requestRF: RemoteFunction?
+local partyEventRE: RemoteEvent?
+local displayNameCache: {[number]: { name: string, expiresAt: number }} = {}
+local friendListCacheByUserId: {[number]: { expiresAt: number, friends: {any}, friendIds: {number} }} = {}
+local userPartyIdCacheByUserId: {[number]: { expiresAt: number, value: string? }} = {}
+local partyCacheByPartyId: {[string]: { expiresAt: number, value: {[string]: any}? }} = {}
+local lastInviteAtByUserId: {[number]: number} = {}
+
+local function getOrCreateRemote(parent: Instance, className: string, name: string): Instance
+	local existing = parent:FindFirstChild(name)
+	if existing and existing.ClassName == className then
+		return existing
+	end
+
+	local created = Instance.new(className)
+	created.Name = name
+	created.Parent = parent
+	return created
+end
+
+local function publishEvent(payload: {[string]: any})
+	if payload.originJobId == nil then
+		payload.originJobId = game.JobId
+	end
+	local success, err = pcall(function()
+		MessagingService:PublishAsync(PARTY_TOPIC_NAME, payload)
+	end)
+	if not success then
+		warn(string.format("[PartyInviteService] Failed to publish event: %s", tostring(err)))
+	end
+end
+
+local function containsUser(userIds: {number}, userId: number): boolean
+	for _, id in ipairs(userIds) do
+		if id == userId then
+			return true
+		end
+	end
+	return false
+end
+
+local function removeUser(userIds: {number}, userId: number)
+	for i, id in ipairs(userIds) do
+		if id == userId then
+			table.remove(userIds, i)
+			return
+		end
+	end
+end
+
+local function getUserPartyId(userId: number): (string?, boolean)
+	local cached = userPartyIdCacheByUserId[userId]
+	if cached and cached.expiresAt > os.clock() then
+		return cached.value, true
+	end
+
+	local ok, partyId = pcall(function()
+		return userPartyMap:GetAsync(tostring(userId))
+	end)
+	if ok then
+		userPartyIdCacheByUserId[userId] = {
+			expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
+			value = partyId,
+		}
+		return partyId, true
+	end
+	return nil, false
+end
+
+local function setUserPartyId(userId: number, partyId: string)
+	local success, err = pcall(function()
+		userPartyMap:SetAsync(tostring(userId), partyId, USER_MAPPING_TTL_SECONDS)
+	end)
+	
+	if success then
+		userPartyIdCacheByUserId[userId] = {
+			expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
+			value = partyId,
+		}
+		PresenceService.UpdatePartyId(userId, partyId)
+	else
+		warn(string.format("[PartyInviteService] Failed to set party ID for user %d: %s", userId, tostring(err)))
+	end
+end
+
+local function clearUserPartyId(userId: number)
+	local success, err = pcall(function()
+		userPartyMap:RemoveAsync(tostring(userId))
+	end)
+	
+	if success then
+		userPartyIdCacheByUserId[userId] = {
+			expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
+			value = nil,
+		}
+		PresenceService.UpdatePartyId(userId, nil)
+	else
+		warn(string.format("[PartyInviteService] Failed to clear party ID for user %d: %s", userId, tostring(err)))
+	end
+end
+
+local function getPartyById(partyId: string): ({[string]: any}?, boolean)
+	local cached = partyCacheByPartyId[partyId]
+	if cached and cached.expiresAt > os.clock() then
+		return cached.value, true
+	end
+
+	local ok, party = pcall(function()
+		return partyMap:GetAsync(partyId)
+	end)
+	
+	if not ok then
+		warn(string.format("[PartyInviteService] getPartyById failed for %s: %s", partyId, tostring(party)))
+		return nil, false
+	end
+	
+	partyCacheByPartyId[partyId] = {
+		expiresAt = os.clock() + USER_PARTY_CACHE_TTL_SECONDS,
+		value = party,
+	}
+	
+	return party, true
+end
+
+local function saveParty(party: {[string]: any})
+	party.updatedAt = os.time()
+	local success, err = pcall(function()
+		partyMap:SetAsync(party.partyId, party, PARTY_TTL_SECONDS)
+	end)
+	if not success then
+		warn(string.format("[PartyInviteService] Failed to save party %s: %s", party.partyId, tostring(err)))
+	end
+end
+
+-- เพิ่มฟังก์ชัน UpdateParty สำหรับแก้ปัญหา Race Condition ด้วย UpdateAsync
+-- IMPORTANT: transformFunction MUST NOT yield (no task.wait, GetAsync, etc.) 
+-- because it is called inside MemoryStore UpdateAsync which prohibits yielding.
+local function updateParty(partyId: string, transformFunction: (any) -> (any?, string?)): (boolean, any?, string?)
+	local updatedValue
+	local errorMessage
+	local success, err = pcall(function()
+		updatedValue = partyMap:UpdateAsync(partyId, function(oldParty)
+			local updatedParty, msg = transformFunction(oldParty)
+			errorMessage = msg
+			
+			if updatedParty then
+				updatedParty.updatedAt = os.time()
+			end
+			
+			return updatedParty
+		end, PARTY_TTL_SECONDS)
+	end)
+	
+	if not success then
+		warn(string.format("[PartyInviteService] updateParty failed for %s: %s", partyId, tostring(err)))
+		return false, nil, tostring(err)
+	end
+	
+	return true, updatedValue, errorMessage
+end
+
+local function ensureMemberNames(party: {[string]: any}): {[string]: string}
+	if type(party.memberNames) ~= "table" then
+		party.memberNames = {}
+	end
+	return party.memberNames
+end
+
+local function setPartyMemberName(party: {[string]: any}, userId: number, name: string?)
+	if type(name) ~= "string" or name == "" then
+		return
+	end
+
+	local memberNames = ensureMemberNames(party)
+	memberNames[tostring(userId)] = name
+end
+
+local function clearPartyMemberName(party: {[string]: any}, userId: number)
+	local memberNames = party.memberNames
+	if type(memberNames) ~= "table" then
+		return
+	end
+	memberNames[tostring(userId)] = nil
+end
+
+local function getPartyMemberName(party: {[string]: any}, userId: number): string?
+	local memberNames = party.memberNames
+	if type(memberNames) ~= "table" then
+		return nil
+	end
+
+	local cached = memberNames[tostring(userId)]
+	if type(cached) == "string" and cached ~= "" then
+		return cached
+	end
+	return nil
+end
+
+local function resolveDisplayName(userId: number, cachedName: string?): string
+	if type(cachedName) == "string" and cachedName ~= "" then
+		return cachedName
+	end
+
+	local cached = displayNameCache[userId]
+	if cached and type(cached.name) == "string" and cached.name ~= "" and cached.expiresAt > os.clock() then
+		return cached.name
+	end
+
+	local player = Players:GetPlayerByUserId(userId)
+	if player and type(player.DisplayName) == "string" and player.DisplayName ~= "" then
+		displayNameCache[userId] = { name = player.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
+		return player.DisplayName
+	end
+
+	local ok, userInfos = pcall(function()
+		return Players:GetUserInfosByUserIdsAsync({ userId })
+	end)
+	if ok and type(userInfos) == "table" then
+		local info = userInfos[1]
+		if type(info) == "table" then
+			local displayName = info.DisplayName
+			if type(displayName) == "string" and displayName ~= "" then
+				displayNameCache[userId] = { name = displayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
+				return displayName
+			end
+		end
+	end
+
+	return tostring(userId)
+end
+
+local function getFriendListEntries(userId: number): ({any}?, {number}?, string?)
+	local cached = friendListCacheByUserId[userId]
+	if cached and cached.expiresAt > os.clock() then
+		return cached.friends, cached.friendIds, nil
+	end
+
+	local ok, pages = pcall(function()
+		return Players:GetFriendsAsync(userId)
+	end)
+	if not ok or not pages then
+		return nil, nil, "friends_fetch_failed"
+	end
+
+	local friends = {}
+	local friendIds = {}
+	local idsToResolve = {}
+
+	-- ขั้นตอนที่ 1: รวบรวม ID เพื่อนทั้งหมด
+	local pageCount = 0
+	while true do
+		pageCount += 1
+		for _, friend in ipairs(pages:GetCurrentPage()) do
+            if not friend.IsOnline then
+                continue
+            end
+            table.insert(friendIds, friend.Id)
+			-- ถ้าไม่มี DisplayName มาให้ (หรือเป็นค่าว่าง) ให้จดไว้ไปดึงแบบ Batch
+			if not friend.DisplayName or friend.DisplayName == "" then
+				table.insert(idsToResolve, friend.Id)
+			else
+				displayNameCache[friend.Id] = { name = friend.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
+			end
+		end
+		if pages.IsFinished or pageCount >= 10 then break end
+		local advancedOk = pcall(function() pages:AdvanceToNextPageAsync() end)
+		if not advancedOk then break end
+	end
+
+	-- ขั้นตอนที่ 2: ดึง DisplayName แบบ Batch (แบ่งกลุ่มละ 100 ตามกฎ Roblox)
+	if #idsToResolve > 0 then
+		for i = 1, #idsToResolve, 100 do
+			pcall(function()
+				local chunk = table.move(idsToResolve, i, math.min(i + 99, #idsToResolve), 1, {})
+				local userInfos = Players:GetUserInfosByUserIdsAsync(chunk)
+				for _, info in ipairs(userInfos) do
+					displayNameCache[info.Id] = { name = info.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
+				end
+			end)
+		end
+	end
+
+	-- ขั้นตอนที่ 3: ประกอบร่างข้อมูลส่งกลับ
+	for _, fId in ipairs(friendIds) do
+		table.insert(friends, {
+			userId = fId,
+			name = if displayNameCache[fId] then displayNameCache[fId].name else tostring(fId),
+		})
+	end
+
+	friendListCacheByUserId[userId] = {
+		expiresAt = os.clock() + FRIEND_LIST_CACHE_TTL_SECONDS,
+		friends = friends,
+		friendIds = friendIds,
+	}
+
+	return friends, friendIds, nil
+end
+
+local function buildPartySnapshot(party: {[string]: any}): {[string]: any}
+	local members = {}
+	ensureMemberNames(party)
+	
+	-- แก้ไข: ดึงชื่อคนที่หายไปแบบรวบยอด (Batch) ป้องกันเน็ตเวิร์กคอขวด
+	local idsToResolve = {}
+	for _, userId in ipairs(party.memberUserIds) do
+		if not getPartyMemberName(party, userId) then
+			local cached = displayNameCache[userId]
+			if not (cached and cached.expiresAt > os.clock()) then
+				table.insert(idsToResolve, userId)
+			end
+		end
+	end
+	
+	if #idsToResolve > 0 then
+		pcall(function()
+			local userInfos = Players:GetUserInfosByUserIdsAsync(idsToResolve)
+			for _, info in ipairs(userInfos) do
+				displayNameCache[info.Id] = { name = info.DisplayName, expiresAt = os.clock() + DISPLAY_NAME_CACHE_TTL_SECONDS }
+			end
+		end)
+	end
+
+	for _, userId in ipairs(party.memberUserIds) do
+		local name = resolveDisplayName(userId, getPartyMemberName(party, userId))
+		setPartyMemberName(party, userId, name)
+		table.insert(members, {
+			userId = userId,
+			name = name,
+		})
+	end
+
+	return {
+		partyId = party.partyId,
+		leaderUserId = party.leaderUserId,
+		members = members,
+		updatedAt = party.updatedAt,
+	}
+end
+
+local function firePartyUpdateToLocalPlayers(snapshot: {[string]: any}, memberUserIds: {number})
+	if not partyEventRE then
+		return
+	end
+
+	for _, userId in ipairs(memberUserIds) do
+		local player = Players:GetPlayerByUserId(userId)
+		if player then
+			partyEventRE:FireClient(player, "PartyUpdated", snapshot)
+		end
+	end
+end
+
+local function firePartyClearedToLocalPlayers(userIds: {number})
+	if not partyEventRE then
+		return
+	end
+
+	for _, userId in ipairs(userIds) do
+		local player = Players:GetPlayerByUserId(userId)
+		if player then
+			partyEventRE:FireClient(player, "PartyUpdated", nil)
+		end
+	end
+end
+
+local function broadcastPartyUpdate(party: {[string]: any})
+	local snapshot = buildPartySnapshot(party)
+	firePartyUpdateToLocalPlayers(snapshot, party.memberUserIds)
+	publishEvent({
+		kind = "party_update",
+		memberUserIds = party.memberUserIds,
+		snapshot = snapshot,
+	})
+end
+
+local function broadcastPartyCleared(targetUserIds: {number})
+	firePartyClearedToLocalPlayers(targetUserIds)
+	publishEvent({
+		kind = "party_clear",
+		targetUserIds = targetUserIds,
+	})
+end
+
+local function createPartyForLeader(leaderUserId: number): {[string]: any}
+	local leader = Players:GetPlayerByUserId(leaderUserId)
+	local leaderName = if leader then leader.DisplayName else resolveDisplayName(leaderUserId, nil)
+
+	local party = {
+		partyId = HttpService:GenerateGUID(false),
+		leaderUserId = leaderUserId,
+		memberUserIds = { leaderUserId },
+		memberNames = {
+			[tostring(leaderUserId)] = leaderName,
+		},
+		updatedAt = os.time(),
+	}
+
+	saveParty(party)
+	setUserPartyId(leaderUserId, party.partyId)
+	return party
+end
+
+local function getOrCreatePartyForLeader(userId: number)
+	local existingPartyId = getUserPartyId(userId)
+	if existingPartyId then
+		local existingParty, fetchOk = getPartyById(existingPartyId)
+		if existingParty then
+			if existingParty.leaderUserId ~= userId then
+				return existingParty, "not_leader"
+			end
+			return existingParty, nil
+		end
+		
+		if fetchOk then
+			clearUserPartyId(userId)
+		else
+			return nil, "api_error"
+		end
+	end
+
+	return createPartyForLeader(userId), nil
+end
+
+local function removeInvite(inviteId: string)
+	pcall(function()
+		inviteMap:RemoveAsync(inviteId)
+	end)
+end
+
+local function getInvite(inviteId: string): {[string]: any}?
+	local ok, invite = pcall(function()
+		return inviteMap:GetAsync(inviteId)
+	end)
+	if ok then
+		return invite
+	end
+	return nil
+end
+
+local function sendInviteToUser(invite: {[string]: any})
+	if not partyEventRE then
+		return
+	end
+
+	local localTarget = Players:GetPlayerByUserId(invite.toUserId)
+	if localTarget then
+		partyEventRE:FireClient(localTarget, "InviteReceived", invite)
+	end
+
+	publishEvent({
+		kind = "invite",
+		toUserId = invite.toUserId,
+		invite = invite,
+	})
+end
+
+local function handleGetOnlineFriends(player: Player)
+	local friends, friendIds, errorMessage = getFriendListEntries(player.UserId)
+	if not friends or not friendIds then
+		return { ok = false, message = errorMessage or "friends_fetch_failed" }
+	end
+
+	local presenceByUserId = PresenceService.GetPresenceByUserIds(friendIds) or {}
+	local result = {}
+	
+	for _, friend in ipairs(friends) do
+		local presence = presenceByUserId[friend.userId]
+		if not presence then
+			continue
+		end
+
+		-- ดึง partyId จาก payload ของ PresenceService ที่แก้ไว้ล่าสุด
+		local friendPartyId = presence.partyId
+		local isInParty = type(friendPartyId) == "string" and friendPartyId ~= ""
+
+		local status = "OFFLINE"
+		local canInvite = false
+
+		if isInParty then
+			status = "IN_PARTY"
+		elseif presence.placeType == "gameplay" then
+			status = "IN_GAMEPLAY"
+		elseif presence.placeType == "lobby" then
+			if presence.jobId == game.JobId then
+				status = "LOBBY_SAME"
+			else
+				status = "LOBBY_OTHER"
+			end
+
+			canInvite = true
+		end
+
+		table.insert(result, {
+			userId = friend.userId,
+			name = friend.name,
+			status = status,
+			canInvite = canInvite,
+		})
+	end
+
+	return { ok = true, data = result }
+end
+
+local function handleGetParty(player: Player)
+	local partyId = getUserPartyId(player.UserId)
+	if not partyId then
+		return { ok = true, data = nil }
+	end
+
+	local party, fetchOk = getPartyById(partyId)
+	if party then
+		if not containsUser(party.memberUserIds, player.UserId) then
+			clearUserPartyId(player.UserId)
+			return { ok = true, data = nil }
+		end
+		return { ok = true, data = buildPartySnapshot(party) }
+	end
+	if fetchOk then
+		clearUserPartyId(player.UserId)
+		return { ok = true, data = nil }
+	else
+		return { ok = false, message = "api_error" }
+	end
+end
+
+local function handleSendInvite(player: Player, payload: {[string]: any})
+	local now = os.clock()
+	local lastInviteAt = lastInviteAtByUserId[player.UserId]
+	if lastInviteAt and now - lastInviteAt < 2 then
+		return { ok = false, message = LocalizationKeys.Party.TooFast }
+	end
+	lastInviteAtByUserId[player.UserId] = now
+
+	local toUserId = tonumber(payload.toUserId)
+	if not toUserId then
+		return { ok = false, message = LocalizationKeys.Party.InvalidTarget }
+	end
+
+	if toUserId == player.UserId then
+		return { ok = false, message = LocalizationKeys.Party.CannotInviteSelf }
+	end
+
+	local presenceByUserId = PresenceService.GetPresenceByUserIds({ toUserId })
+	local targetPresence = presenceByUserId[toUserId]
+	if not targetPresence or targetPresence.placeType ~= "lobby" then
+		return { ok = false, message = LocalizationKeys.Party.InvalidTargetLobby }
+	end
+
+	local party, err = getOrCreatePartyForLeader(player.UserId)
+	if err then
+		local errorMessage = ""
+		if err == "not_leader" then
+			errorMessage = LocalizationKeys.Party.OnlyLeaderCanInvite
+		elseif err == "full" then
+			errorMessage = LocalizationKeys.Party.PartyFull
+		elseif err == "api_error" then
+			errorMessage = LocalizationKeys.Party.ApiError
+		end
+		
+		return { ok = false, message = errorMessage }
+	end
+	setPartyMemberName(party, player.UserId, player.DisplayName)
+	if #party.memberUserIds >= MAX_PARTY_SIZE then
+		return { ok = false, message = LocalizationKeys.Party.PartyFull }
+	end
+
+	if containsUser(party.memberUserIds, toUserId) then
+		return { ok = false, message = LocalizationKeys.Party.AlreadyInParty }
+	end
+
+	local targetPartyId = getUserPartyId(toUserId)
+	if targetPartyId then
+		return { ok = false, message = LocalizationKeys.Party.TargetAlreadyInParty }
+	end
+
+	local invite = {
+		inviteId = HttpService:GenerateGUID(false),
+		fromUserId = player.UserId,
+		fromName = player.DisplayName,
+		toUserId = toUserId,
+		partyId = party.partyId,
+		createdAt = os.time(),
+		expiresAt = os.time() + INVITE_TTL_SECONDS,
+	}
+
+	local ok = pcall(function()
+		inviteMap:SetAsync(invite.inviteId, invite, INVITE_TTL_SECONDS)
+	end)
+
+	if not ok then
+		return { ok = false, message = LocalizationKeys.Party.InviteSaveFailed }
+	end
+
+	sendInviteToUser(invite)
+	return { ok = true, data = invite }
+end
+
+local function handleRespondInvite(player: Player, payload: {[string]: any})
+	local inviteId = tostring(payload.inviteId or "")
+	if inviteId == "" then
+		return { ok = false, message = LocalizationKeys.Party.InvalidInviteId }
+	end
+
+	local accept = payload.accept == true
+	local invite = getInvite(inviteId)
+	if not invite then
+		return { ok = false, message = LocalizationKeys.Party.InviteNotFound }
+	end
+
+	if invite.toUserId ~= player.UserId then
+		return { ok = false, message = LocalizationKeys.Party.InviteNotForPlayer }
+	end
+
+	if os.time() > (invite.expiresAt or 0) then
+		removeInvite(inviteId)
+		return { ok = false, message = LocalizationKeys.Party.InviteExpired }
+	end
+
+	if accept then
+		local existingPartyId = getUserPartyId(player.UserId)
+		if existingPartyId then
+			local existingParty, fetchOk = getPartyById(existingPartyId)
+			if existingParty then
+				removeInvite(inviteId)
+				return { ok = false, message = LocalizationKeys.Party.AlreadyInParty }
+			elseif fetchOk then
+				-- Ghost party: Mapping exists but party data is gone. Clear it and proceed.
+				clearUserPartyId(player.UserId)
+			else
+				-- API error: Preserve state and don't allow joining a new party yet.
+				return { ok = false, message = LocalizationKeys.Party.ApiError }
+			end
+		end
+	end
+
+
+	local success, updatedPartySnapshot, err = updateParty(invite.partyId, function(party)
+		if not party then
+			return nil, LocalizationKeys.Party.PartyNotFound
+		end
+
+		if #party.memberUserIds >= MAX_PARTY_SIZE then
+			return party, LocalizationKeys.Party.PartyFull
+		end
+
+		if not containsUser(party.memberUserIds, player.UserId) then
+			table.insert(party.memberUserIds, player.UserId)
+		end
+		
+		ensureMemberNames(party)
+		party.memberNames[tostring(player.UserId)] = player.DisplayName
+		party.memberNames[tostring(invite.fromUserId)] = invite.fromName
+		
+		return party, nil
+	end)
+
+	removeInvite(inviteId)
+
+	if not success or err or not updatedPartySnapshot then
+		return { ok = false, message = err or LocalizationKeys.Party.UpdateFailed }
+	end
+
+	setUserPartyId(player.UserId, updatedPartySnapshot.partyId)
+	broadcastPartyUpdate(updatedPartySnapshot)
+	
+	return { ok = true, data = buildPartySnapshot(updatedPartySnapshot) }
+end
+
+local function handleLeaveParty(player: Player)
+	local partyId = getUserPartyId(player.UserId)
+	if not partyId then
+		return { ok = false, message = LocalizationKeys.Party.NotInParty }
+	end
+
+	local wasDeleted = false
+
+	local success, updatedPartySnapshot = updateParty(partyId, function(party)
+		if not party then return nil end
+		
+		removeUser(party.memberUserIds, player.UserId)
+		clearPartyMemberName(party, player.UserId)
+		
+		if #party.memberUserIds == 0 then
+			wasDeleted = true
+			return nil -- ลบปาร์ตี้ถ้าไม่เหลือใคร
+		end
+
+		if party.leaderUserId == player.UserId then
+			party.leaderUserId = party.memberUserIds[1]
+		end
+		
+		return party
+	end)
+
+	clearUserPartyId(player.UserId)
+	broadcastPartyCleared({ player.UserId })
+
+	if not success then return { ok = false, message = "update_failed" } end
+	if wasDeleted then return { ok = true } end
+	
+	if updatedPartySnapshot then
+		broadcastPartyUpdate(updatedPartySnapshot)
+	end
+	return { ok = true, data = if updatedPartySnapshot then buildPartySnapshot(updatedPartySnapshot) else nil }
+end
+
+local function handleKickMember(player: Player, payload: {[string]: any})
+	local targetUserId = tonumber(payload.targetUserId)
+	if not targetUserId or targetUserId == player.UserId then
+		return { ok = false, message = LocalizationKeys.Party.InvalidTarget }
+	end
+
+	local partyId = getUserPartyId(player.UserId)
+	if not partyId then return { ok = false, message = LocalizationKeys.Party.NotInParty } end
+
+	local errorMessage = nil
+
+	local success, updatedPartySnapshot = updateParty(partyId, function(party)
+		if not party then
+			errorMessage = LocalizationKeys.Party.PartyNotFound
+			return nil
+		end
+		if party.leaderUserId ~= player.UserId then
+			errorMessage = LocalizationKeys.Party.OnlyLeaderCanKick
+			return party -- แก้ไข: คืนค่าเดิมเพื่อยกเลิก โดยไม่ลบปาร์ตี้ทิ้ง
+		end
+		if not containsUser(party.memberUserIds, targetUserId) then
+			errorMessage = LocalizationKeys.Party.TargetNotInParty
+			return party -- แก้ไข: คืนค่าเดิม
+		end
+
+		removeUser(party.memberUserIds, targetUserId)
+		clearPartyMemberName(party, targetUserId)
+		
+		if #party.memberUserIds == 0 then return nil end -- ลบจริงๆ เมื่อไม่มีใครเหลือ
+		
+		errorMessage = nil
+		return party
+	end)
+
+	if not success or errorMessage or not updatedPartySnapshot then
+		return { ok = false, message = errorMessage or LocalizationKeys.Party.UpdateFailed }
+	end
+
+	clearUserPartyId(targetUserId)
+	broadcastPartyCleared({ targetUserId })
+	broadcastPartyUpdate(updatedPartySnapshot)
+	return { ok = true, data = buildPartySnapshot(updatedPartySnapshot) }
+end
+
+local function handleDisbandParty(player: Player)
+	local partyId = getUserPartyId(player.UserId)
+	if not partyId then return { ok = false, message = LocalizationKeys.Party.NotInParty } end
+
+	local membersToClear = {}
+	local success = updateParty(partyId, function(party)
+		if not party then return nil end
+		if party.leaderUserId ~= player.UserId then return party end -- ไม่ให้ลบถ้าไม่ใช่หัวหน้า
+
+		membersToClear = table.clone(party.memberUserIds)
+		return nil -- คืนค่า nil เพื่อลบข้อมูลปาร์ตี้ออกจาก MemoryStore จริงๆ
+	end)
+
+	if not success then return { ok = false, message = LocalizationKeys.Party.DisbandFailed } end
+
+	for _, userId in ipairs(membersToClear) do
+		clearUserPartyId(userId)
+	end
+	broadcastPartyCleared(membersToClear)
+	return { ok = true }
+end
+
+local function updatePartyForLeavingUser(userId: number)
+	local partyId = getUserPartyId(userId)
+	if not partyId then return end
+
+	local wasDeleted = false
+
+	local success, updatedPartySnapshot = updateParty(partyId, function(party)
+		if not party then return nil end
+		removeUser(party.memberUserIds, userId)
+		clearPartyMemberName(party, userId)
+		
+		if #party.memberUserIds == 0 then
+			wasDeleted = true
+			return nil -- ลบปาร์ตี้
+		end
+
+		if party.leaderUserId == userId then
+			party.leaderUserId = party.memberUserIds[1]
+		end
+		
+		return party
+	end)
+	
+	clearUserPartyId(userId)
+
+	-- แก้ไข: ย้าย Side Effects ออกมาข้างนอกลูปการเซฟ (Pure Function)
+	if success then
+		broadcastPartyCleared({ userId })
+		if not wasDeleted and updatedPartySnapshot then
+			broadcastPartyUpdate(updatedPartySnapshot)
+		end
+	end
+end
+
+local function onPartyMessage(message)
+	if not partyEventRE then
+		return
+	end
+
+	local data = message.Data
+	if type(data) ~= "table" then
+		return
+	end
+
+	if data.originJobId == game.JobId then
+		return
+	end
+
+	if data.kind == "invite" then
+		local target = Players:GetPlayerByUserId(tonumber(data.toUserId) or -1)
+		if target then
+			partyEventRE:FireClient(target, "InviteReceived", data.invite)
+		end
+		return
+	end
+
+	if data.kind == "party_update" then
+		local snapshot = data.snapshot
+		local members = data.memberUserIds
+		if type(snapshot) ~= "table" or type(members) ~= "table" then
+			return
+		end
+
+		for _, userId in ipairs(members) do
+			local target = Players:GetPlayerByUserId(tonumber(userId) or -1)
+			if target then
+				partyEventRE:FireClient(target, "PartyUpdated", snapshot)
+				PresenceService.UpdatePartyId(target.UserId, snapshot.partyId)
+			end
+		end
+		return
+	end
+
+	if data.kind == "invite_declined" then
+		local target = Players:GetPlayerByUserId(tonumber(data.toUserId) or -1)
+		if target then
+			partyEventRE:FireClient(target, "InviteDeclined", {
+				fromUserId = data.fromUserId,
+				fromName = data.fromName,
+			})
+		end
+		return
+	end
+
+	if data.kind == "party_clear" then
+		local targetUserIds = data.targetUserIds
+		if type(targetUserIds) ~= "table" then
+			return
+		end
+
+		for _, userId in ipairs(targetUserIds) do
+			local target = Players:GetPlayerByUserId(tonumber(userId) or -1)
+			if target then
+				partyEventRE:FireClient(target, "PartyUpdated", nil)
+				PresenceService.UpdatePartyId(target.UserId, nil)
+			end
+		end
+	end
+end
+
+local function onRequest(player: Player, action: string, payload: {[string]: any}?)
+	payload = payload or {}
+
+	if action == "GetOnlineFriends" then
+		return handleGetOnlineFriends(player)
+	end
+	if action == "GetParty" then
+		return handleGetParty(player)
+	end
+	if action == "SendInvite" then
+		return handleSendInvite(player, payload)
+	end
+	if action == "RespondInvite" then
+		return handleRespondInvite(player, payload)
+	end
+	if action == "LeaveParty" then
+		return handleLeaveParty(player)
+	end
+	if action == "KickMember" then
+		return handleKickMember(player, payload)
+	end
+	if action == "DisbandParty" then
+		return handleDisbandParty(player)
+	end
+
+	return { ok = false, message = "unknown_action" }
+end
+
+function PartyInviteService.Init()
+	if initialized then
+		return
+	end
+	initialized = true
+
+	local sharedFolder = ReplicatedStorage:WaitForChild("shared")
+	local remotesFolder = sharedFolder:FindFirstChild("Remotes")
+	if not remotesFolder then
+		remotesFolder = Instance.new("Folder")
+		remotesFolder.Name = "Remotes"
+		remotesFolder.Parent = sharedFolder
+	end
+
+	requestRF = getOrCreateRemote(remotesFolder, "RemoteFunction", REQUEST_RF_NAME) :: RemoteFunction
+	partyEventRE = getOrCreateRemote(remotesFolder, "RemoteEvent", PARTY_EVENT_RE_NAME) :: RemoteEvent
+	requestRF.OnServerInvoke = onRequest
+
+	pcall(function()
+		subscription = MessagingService:SubscribeAsync(PARTY_TOPIC_NAME, onPartyMessage)
+	end)
+	
+	playerRemovingConn = Players.PlayerRemoving:Connect(function(player)
+		friendListCacheByUserId[player.UserId] = nil
+		displayNameCache[player.UserId] = nil -- ป้องกัน Memory Leak จากผู้เล่นที่ออกจากเซิร์ฟเวอร์
+		lastInviteAtByUserId[player.UserId] = nil -- ลบ Rate Limit Cache
+		updatePartyForLeavingUser(player.UserId)
+	end)
+	
+	-- ลูปสำหรับทำความสะอาด Cache ทุกๆ 60 วินาที
+	task.spawn(function()
+		while initialized do
+			task.wait(60)
+			local now = os.clock()
+			
+			for userId, data in pairs(displayNameCache) do
+				if data.expiresAt and data.expiresAt < now then
+					displayNameCache[userId] = nil
+				end
+			end
+			
+			for userId, data in pairs(friendListCacheByUserId) do
+				if data.expiresAt and data.expiresAt < now then
+					friendListCacheByUserId[userId] = nil
+				end
+			end
+			
+			for userId, data in pairs(userPartyIdCacheByUserId) do
+				if data.expiresAt and data.expiresAt < now then
+					userPartyIdCacheByUserId[userId] = nil
+				end
+			end
+
+			for partyId, data in pairs(partyCacheByPartyId) do
+				if data.expiresAt and data.expiresAt < now then
+					partyCacheByPartyId[partyId] = nil
+				end
+			end
+		end
+	end)
+end
+
+function PartyInviteService.Destroy()
+	if subscription then
+		subscription:Disconnect()
+		subscription = nil
+	end
+
+	if playerRemovingConn then
+		playerRemovingConn:Disconnect()
+		playerRemovingConn = nil
+	end
+
+	if requestRF then
+		requestRF.OnServerInvoke = nil
+	end
+
+	requestRF = nil
+	partyEventRE = nil
+	initialized = false
+	table.clear(friendListCacheByUserId)
+	table.clear(userPartyIdCacheByUserId)
+	table.clear(displayNameCache)
+	table.clear(partyCacheByPartyId)
+	table.clear(lastInviteAtByUserId)
+end
+
+function PartyInviteService.GetPartyDataForUser(userId: number): {[string]: any}?
+	local partyId = getUserPartyId(userId)
+	if not partyId then
+		return nil
+	end
+
+	local party, fetchOk = getPartyById(partyId)
+	if not party then
+		if fetchOk then
+			clearUserPartyId(userId)
+		end
+		return nil
+	end
+
+	return {
+		partyId = party.partyId,
+		leaderUserId = party.leaderUserId,
+		memberUserIds = table.clone(party.memberUserIds),
+	}
+end
+
+return PartyInviteService
