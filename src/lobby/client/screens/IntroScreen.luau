@@ -133,7 +133,6 @@ end
 
 local function runRealLoading(epoch: number)
 	local assetsToLoad = {}
-	-- โหลดเฉพาะ Asset ใน UI เพื่อป้องกันหน้าค้าง (Infinite Yield) และลดภาระเครื่อง
 	for _, v in ipairs(_gui:GetDescendants()) do
 		if v:IsA("ImageLabel") or v:IsA("ImageButton") or v:IsA("Sound") then
 			table.insert(assetsToLoad, v)
@@ -143,16 +142,16 @@ local function runRealLoading(epoch: number)
 	local total  = math.max(#assetsToLoad, 1)
 	local loaded = 0
 	local lastUiUpdate = 0
-
-	-- 1. อัปเดตสถานะ epoch และดึง Thread ปัจจุบันไว้
-	local currentThread = coroutine.running()
+	
+	-- 1. Use a BindableEvent to safely wait for completion or timeout
+	local finishedEvent = Instance.new("BindableEvent")
 	local isFinished = false
 
-	-- 2. สร้างระบบ Timeout ป้องกันโหลดค้าง (เช่น ถ้าเกิน 10 วินาทีให้ข้ามไปเลย)
+	-- 2. Create a timeout that signals the event
 	local timeoutThread = task.delay(10, function()
 		if not isFinished and isEpochCurrent(epoch) then
 			isFinished = true
-			task.spawn(currentThread) -- ปลุก Thread หลักให้ทำงานต่อเมื่อหมดเวลา
+			finishedEvent:Fire()
 		end
 	end)
 
@@ -165,27 +164,32 @@ local function runRealLoading(epoch: number)
 		end
 	end
 
-	-- 3. เรียกใช้ PreloadAsync บน Thread หลัก
-	pcall(function()
-		ContentProvider:PreloadAsync(assetsToLoad, function(_id, _status)
-			if not isEpochCurrent(epoch) or isFinished then return end
-			loaded += 1
-			local now = os.clock()
-			if now - lastUiUpdate < 1 / 30 and loaded < total then return end
-			lastUiUpdate = now
-			local progress = loaded / total
-			_loadingFill.Size = UDim2.new(progress, 0, _fillSizeY.Scale, _fillSizeY.Offset)
-			_loadingText.Text = getText(progress)
+	-- 3. Run PreloadAsync in a separate thread
+	task.spawn(function()
+		pcall(function()
+			ContentProvider:PreloadAsync(assetsToLoad, function(_id, _status)
+				if not isEpochCurrent(epoch) or isFinished then return end
+				loaded += 1
+				local now = os.clock()
+				if now - lastUiUpdate < 1 / 30 and loaded < total then return end
+				lastUiUpdate = now
+				local progress = loaded / total
+				_loadingFill.Size = UDim2.new(progress, 0, _fillSizeY.Scale, _fillSizeY.Offset)
+				_loadingText.Text = getText(progress)
+			end)
 		end)
+		
+		if not isFinished then
+			isFinished = true
+			task.cancel(timeoutThread)
+			finishedEvent:Fire()
+		end
 	end)
 
-	-- 4. เมื่อโหลดเสร็จสิ้น (หรือหมดเวลา) ให้เคลียร์สถานะและปิดตัว Timeout ทิ้ง
-	if not isFinished then
-		isFinished = true
-		task.cancel(timeoutThread) -- ยกเลิกตัวนับเวลาถอยหลังเพราะโหลดเสร็จก่อน
-	end
+	-- 4. Wait for the first signal (completion or timeout)
+	finishedEvent.Event:Wait()
+	finishedEvent:Destroy()
 
-	-- 5. ตรวจสอบ Epoch อีกครั้งก่อนไปต่อ
 	if not isEpochCurrent(epoch) then return end
 
 	safeTween(_loadingFill,

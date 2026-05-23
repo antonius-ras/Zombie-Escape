@@ -22,6 +22,7 @@ local statusEvent: RemoteEvent?
 local lastRequestAtByUserId: {[number]: number} = {}
 local partyQueueStateByPartyId: {[string]: { token: number, cancelled: boolean }} = {}
 local nextPartyQueueToken = 0
+local playersToTeleport = {}
 
 local function getOrCreateRemote(remotesFolder: Instance, remoteName: string): RemoteEvent
 	local existing = remotesFolder:FindFirstChild(remoteName)
@@ -159,10 +160,16 @@ pcall(function()
 		for _, userId in ipairs(data.memberUserIds) do
 			local player = Players:GetPlayerByUserId(userId)
 			if player then
-				local teleportOptions = Instance.new("TeleportOptions")
-				teleportOptions.ReservedServerAccessCode = data.accessCode
-				TeleportService:TeleportAsync(data.placeId, { player }, teleportOptions)
+				table.insert(playersToTeleport, player)
 			end
+		end
+		
+		if #playersToTeleport > 0 then
+			local teleportOptions = Instance.new("TeleportOptions")
+			teleportOptions.ReservedServerAccessCode = data.accessCode
+			pcall(function()
+				TeleportService:TeleportAsync(data.placeId, playersToTeleport, teleportOptions)
+			end)
 		end
 	end)
 end)
