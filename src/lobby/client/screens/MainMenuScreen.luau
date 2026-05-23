@@ -5,6 +5,7 @@
 -- ============================================================
 
 local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MainMenuScreen = {}
 
@@ -14,6 +15,8 @@ local _background: Frame
 local _menuBtn: GuiButton
 local _musicBtn: GuiButton
 local _playBtn: GuiButton
+
+local LocalizationKeys = require((ReplicatedStorage :: any).common.modules:WaitForChild("LocalizationKeys"))
 
 -- callbacks จาก UIManager
 local _onMenuPressed:  () -> ()
@@ -26,7 +29,7 @@ local _transitionEpoch = 0
 local _isInteractive = false
 local _isQueueMode = false
 local _onQueueCancelPressed: (() -> ())?
-local _defaultPlayText = "PLAY!"
+local _defaultPlayText = LocalizationKeys["ui.play"]
 local BG_TRANSPARENCY = 0.8
 -- ประกาศค่าคงที่ไว้ด้านบนสุดของไฟล์
 local OFF_SCREEN_OFFSET_X = 1.5
@@ -172,9 +175,6 @@ function MainMenuScreen.init(
 	_menuBtn    = _background:WaitForChild("MenuBtn")
 	_musicBtn   = _background:WaitForChild("MusicBtn")
 	_playBtn    = _background:WaitForChild("PlayBtn")
-	pcall(function()
-		_defaultPlayText = (_playBtn :: any).Text
-	end)
 
 	_basePositions[_menuBtn] = _menuBtn.Position
 	_basePositions[_musicBtn] = _musicBtn.Position

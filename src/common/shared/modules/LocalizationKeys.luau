@@ -7,4 +7,11 @@ return {
     ["errors.leave_party_before_solo"] = "Leave the party before starting solo",
     ["errors.teleport_failed"] = "Teleport failed",
     ["errors.leader_left"] = "Leader left the server",
+    ["ui.loading_ui"] = "LOADING UI...",
+    ["ui.loading_assets"] = "LOADING ASSETS...",
+    ["ui.loading_icons"] = "LOADING ICONS...",
+    ["ui.loading_sounds"] = "LOADING SOUNDS...",
+    ["ui.almost_done"] = "ALMOST DONE...",
+    ["ui.ready"] = "READY!",
+    ["ui.play"] = "PLAY!",
 }

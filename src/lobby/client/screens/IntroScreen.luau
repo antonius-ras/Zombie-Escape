@@ -6,6 +6,7 @@
 
 local TweenService    = game:GetService("TweenService")
 local ContentProvider = game:GetService("ContentProvider")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local IntroScreen = {}
 
@@ -18,6 +19,8 @@ local _loadingText: TextLabel
 local _playButton: TextButton
 local _fillSizeY: UDim
 
+local LocalizationKeys = require((ReplicatedStorage :: any).common.modules:WaitForChild("LocalizationKeys"))
+
 local _onPlayPressed: () -> () -- callback ส่งมาจาก UIManager
 local _basePositions: {[GuiObject]: UDim2} = {}
 local _activeTweens: {[Instance]: Tween} = {}
@@ -26,11 +29,11 @@ local _pulseEpoch = 0
 local _isInteractive = false
 local BG_TRANSPARENCY = 0.8
 local LOADING_MESSAGES = {
-	LOADING_UI = "LOADING UI...",
-	LOADING_ASSETS = "LOADING ASSETS...",
-	LOADING_ICONS = "LOADING ICONS...",
-	LOADING_SOUNDS = "LOADING SOUNDS...",
-	ALMOST_DONE = "ALMOST DONE...",
+	LOADING_UI = LocalizationKeys["ui.loading_ui"],
+	LOADING_ASSETS = LocalizationKeys["ui.loading_assets"],
+	LOADING_ICONS = LocalizationKeys["ui.loading_icons"],
+	LOADING_SOUNDS = LocalizationKeys["ui.loading_sounds"],
+	ALMOST_DONE = LocalizationKeys["ui.almost_done"],
 }
 
 -- ============================================================
@@ -205,7 +208,7 @@ local function runRealLoading(epoch: number)
 		TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Size = UDim2.new(1, 0, _fillSizeY.Scale, _fillSizeY.Offset) }
 	)
-	_loadingText.Text = "READY!"
+	_loadingText.Text = LocalizationKeys["ui.ready"]
 	task.wait(0.35)
 end
 
@@ -260,6 +263,7 @@ function IntroScreen.init(gui: ScreenGui, onPlayPressed: () -> ())
 	_loadingFill.Size     = UDim2.new(0, 0, _fillSizeY.Scale, _fillSizeY.Offset)
 	_playButton.Visible   = false
 	_playButton.Active    = false
+	_playButton.Text      = LocalizationKeys["ui.play"]
 
 	_basePositions[_loadingBarBG] = _loadingBarBG.Position
 	_basePositions[_playButton] = _playButton.Position
